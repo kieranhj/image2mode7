@@ -661,16 +661,19 @@ int match_closest_palette_colour(unsigned char r, unsigned char g, unsigned char
 
 	for (int c = 0; c < 8; c++)
 	{
-		unsigned char cr = GET_RED_FROM_COLOUR(c);
-		unsigned char cg = GET_GREEN_FROM_COLOUR(c);
-		unsigned char cb = GET_BLUE_FROM_COLOUR(c);
-
-		int error = ((cr - r) * (cr - r)) + ((cg - g) * (cg - g)) + ((cb - b) * (cb - b));
-
-		if (error < min_error)
+		for (int d = c; d < 8; d++)
 		{
-			min_error = error;
-			min_colour = c;
+			int cr = (GET_RED_FROM_COLOUR(c) + GET_RED_FROM_COLOUR(d) ) / 2;
+			int cg = (GET_GREEN_FROM_COLOUR(c) + GET_GREEN_FROM_COLOUR(d)) / 2;
+			int cb = (GET_BLUE_FROM_COLOUR(c) + GET_BLUE_FROM_COLOUR(d)) / 2;
+
+			int error = ((cr - r) * (cr - r)) + ((cg - g) * (cg - g)) + ((cb - b) * (cb - b));
+
+			if (error < min_error)
+			{
+				min_error = error;
+				min_colour = (c * 8) + d;
+			}
 		}
 	}
 
@@ -833,11 +836,14 @@ int main(int argc, char **argv)
 				{
 					// Not black = full colour
 
-					int c = match_closest_palette_colour(R, G, B);
+					int u = match_closest_palette_colour(R, G, B);
 
-					r = GET_RED_FROM_COLOUR(c);
-					g = GET_GREEN_FROM_COLOUR(c);
-					b = GET_BLUE_FROM_COLOUR(c);
+					int c = u / 8;
+					int d = u % 8;
+
+					r = (GET_RED_FROM_COLOUR(c) + GET_RED_FROM_COLOUR(d)) / 2;
+					g = (GET_GREEN_FROM_COLOUR(c) + GET_GREEN_FROM_COLOUR(d)) / 2;
+					b = (GET_BLUE_FROM_COLOUR(c) + GET_BLUE_FROM_COLOUR(d)) / 2;
 				}
 			}
 

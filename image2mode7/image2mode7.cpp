@@ -978,6 +978,10 @@ int main(int argc, char **argv)
 		{
 			printf("[%d] Start colour=%d ", y7, min_colour);
 		}
+		else
+		{
+			printf("\rProcessing line %d/%d...", y7, frame_height);
+		}
 
 		// Set this state before frame begins
 		mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 1)] = MODE7_GFX_COLOUR + min_colour;
@@ -1023,6 +1027,10 @@ int main(int argc, char **argv)
 	{
 		printf("Total frame error = %d\n", frame_error);
 		printf("MODE 7 frame size = %d bytes\n", FRAME_SIZE);
+	}
+	else
+	{
+		printf("\n");
 	}
 
 	if (output_name)

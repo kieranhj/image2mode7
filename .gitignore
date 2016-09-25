@@ -1,0 +1,10 @@
+*.obj
+*.log
+*.tlog
+*.idb
+*.db
+*.opendb
+*.iobj
+*.ipdb
+image2mode7/Debug/vc140.pdb
+image2mode7/Release/vc140.pdb

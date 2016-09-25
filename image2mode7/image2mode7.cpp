@@ -63,6 +63,7 @@ static unsigned char output[MODE7_WIDTH];
 
 static bool global_use_hold = true;
 static bool global_use_fill = true;
+static bool global_use_geometric = false;
 
 static int frame_width;
 static int frame_height;
@@ -210,6 +211,19 @@ static int error_colour_vs_colour[8][8] = {
 #endif
 };
 
+int error_function(int screen_r, int screen_g, int screen_b, int image_r, int image_g, int image_b)
+{
+	if (global_use_geometric)
+	{
+		return (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b)));		// / (255 * 255);
+	}
+	else
+	{
+		// Use lookup
+		return error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
+	}
+}
+
 int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg, int bg)
 {
 	int x = IMAGE_X_FROM_X7(x7);
@@ -235,8 +249,7 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 
 	// Calculate the error between them
 
-	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
-	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
+	error += error_function(screen_r, screen_g, screen_b, image_r, image_g, image_b);
 
 	screen_r = screen_char & 2 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 2 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -246,8 +259,7 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x + 1, y, 1);
 	image_b = src(x + 1, y, 2);
 
-	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
-	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
+	error += error_function(screen_r, screen_g, screen_b, image_r, image_g, image_b);
 
 	screen_r = screen_char & 4 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 4 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -257,8 +269,7 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x, y + 1, 1);
 	image_b = src(x, y + 1, 2);
 
-	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
-	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
+	error += error_function(screen_r, screen_g, screen_b, image_r, image_g, image_b);
 
 	screen_r = screen_char & 8 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 8 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -268,8 +279,7 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x + 1, y + 1, 1);
 	image_b = src(x + 1, y + 1, 2);
 
-	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
-	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
+	error += error_function(screen_r, screen_g, screen_b, image_r, image_g, image_b);
 
 	screen_r = screen_char & 16 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 16 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -279,8 +289,7 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x, y + 2, 1);
 	image_b = src(x, y + 2, 2);
 
-	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
-	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
+	error += error_function(screen_r, screen_g, screen_b, image_r, image_g, image_b);
 
 	screen_r = screen_char & 64 ? GET_RED_FROM_COLOUR(fg) : GET_RED_FROM_COLOUR(bg);
 	screen_g = screen_char & 64 ? GET_GREEN_FROM_COLOUR(fg) : GET_GREEN_FROM_COLOUR(bg);
@@ -290,8 +299,7 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 	image_g = src(x + 1, y + 2, 1);
 	image_b = src(x + 1, y + 2, 2);
 
-	//	error += (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))) / (255 * 255);
-	error += error_colour_vs_colour[get_colour_from_rgb(screen_r, screen_g, screen_b)][get_colour_from_rgb(image_r, image_g, image_b)];
+	error += error_function(screen_r, screen_g, screen_b, image_r, image_g, image_b);
 
 	// For all six pixels in the character cell
 
@@ -629,10 +637,13 @@ int main(int argc, char **argv)
 	const int white = cimg_option("-white", 128, "White threshold (grey above this considered pure white - below is colour brightness ramp)");
 	const bool no_hold = cimg_option("-nohold", false, "Disallow Hold Graphics control code");
 	const bool no_fill = cimg_option("-nofill", false, "Disallow New Background control code");
+	const bool no_quant = cimg_option("-noquant", false, "Don't quantise the input image to 3-bit MODE 7 palette");
+	const bool no_scale = cimg_option("-noscale", false, "Don't scale the image image to MODE 7 resolution");
 	const bool simg = cimg_option("-test", false, "Save test image (post-quantisation) before Teletext conversion");
 	const bool inf = cimg_option("-inf", false, "Save inf file for image");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
+	const bool error_geo = cimg_option("-geo", false, "Use geometric distance as error (otherwise lookup table)");
 
 	char filename[256];
 	FILE *file;
@@ -642,6 +653,7 @@ int main(int argc, char **argv)
 
 	global_use_hold = !no_hold;
 	global_use_fill = !no_fill;
+	global_use_geometric = error_geo;
 
 	if (verbose)
 	{
@@ -654,176 +666,199 @@ int main(int argc, char **argv)
 	// Colour conversion etc.
 	//
 
-	if (verbose)
-	{
-		printf("Converting to MODE 7 palette...\n", input_name);
-	}
-
-	// Convert to HSV
-
-	cimg_forXY(src, x, y)
-	{
-		unsigned char R = src(x, y, 0);
-		unsigned char G = src(x, y, 1);
-		unsigned char B = src(x, y, 2);
-
-		unsigned char r, g, b;
-		r = g = b = 0;
-
-		unsigned char M = MAX_3(R, G, B);
-		unsigned char m = MIN_3(R, G, B);
-
-		unsigned char C = M - m;				// Chroma - black to white
-
-		unsigned char Hc = 0;					// Hue - as BBC colour palette
-
-		if (C != 0)
-		{
-			if (M == R)
-			{
-				int h = 255 * (G - B) / C;
-
-				if (h > 127 ) Hc = 3;			// yellow
-				else if (h < -128) Hc = 5;		// magenta
-				else Hc = 1;					// red
-			}
-			else if (M == G)
-			{
-				int h = 255 * (B - R) / C;
-
-				if (h > 127) Hc = 6;			// cyan
-				else if (h < -128) Hc = 3;		// yellow
-				else Hc = 2;					// green
-			}
-			else if (M == B)
-			{
-				int h = 255 * (R - G) / C;
-
-				if (h > 127) Hc = 5;			// magenta
-				else if (h < -128) Hc = 6;		// cyan
-				else Hc = 2;					// blue
-			}
-		}
-
-		unsigned char Y = (unsigned char)(0.2126f * R + 0.7152f * G + 0.0722f * B);		// Luma (screen brightess)
-
-		unsigned char V = M;					// Value
-
-		int S = 0;								// Saturation
-
-		if (C != 0)
-		{
-			S = 255 * C / V;
-		}
-
-		// If saturation too low assume grey
-
-		if (S < sat)
-		{
-			// Grey
-			// Adjust colour palette for grey scale
-			// Map value to colour ramp - change RAMP!
-
-			unsigned char Gc = 0;
-			int midpoint = (white - black) / 2;
-
-			if (V < black)
-				Gc = 0;
-				Gc = 4;			// blue
-			else if (V < white)
-				Gc = 6;			// cyan
-			else
-				Gc = 7;			// white		// could use yellow?
-				
-			r = GET_RED_FROM_COLOUR(Gc);
-			g = GET_GREEN_FROM_COLOUR(Gc);
-			b = GET_BLUE_FROM_COLOUR(Gc);
-		}
-		else
-		{
-			// Colour
-			// If Value is too low then assume black
-
-			if (V < value)
-			{
-				// Black
-				r = g = b = 0;
-			}
-			else
-			{
-				// Not black = full colour
-
-				int c = match_closest_palette_colour(R, G, B);
-
-				r = GET_RED_FROM_COLOUR(c);
-				g = GET_GREEN_FROM_COLOUR(c);
-				b = GET_BLUE_FROM_COLOUR(c);
-			}
-		}
-
-		src(x, y, 0) = r;
-		src(x, y, 1) = g;
-		src(x, y, 2) = b;
-	}
-
-	// Dithering?
-
-	
-	//
-	// Save output of colour conversion for debug
-	//
-
-	if (simg)
+	if (no_quant)
 	{
 		if (verbose)
 		{
-			printf("Saving test image '%s_quant.png'...\n", input_name);
+			printf("Skipping conversion to MODE 7 palette...\n");
+		}
+	}
+	else
+	{
+		if (verbose)
+		{
+			printf("Converting to MODE 7 palette...\n");
 		}
 
-		sprintf(filename, "%s_quant.png", input_name);
-		src.save(filename);
+		// Convert to HSV
+
+		cimg_forXY(src, x, y)
+		{
+			unsigned char R = src(x, y, 0);
+			unsigned char G = src(x, y, 1);
+			unsigned char B = src(x, y, 2);
+
+			unsigned char r, g, b;
+			r = g = b = 0;
+
+			unsigned char M = MAX_3(R, G, B);
+			unsigned char m = MIN_3(R, G, B);
+
+			unsigned char C = M - m;				// Chroma - black to white
+
+			unsigned char Hc = 0;					// Hue - as BBC colour palette
+
+			if (C != 0)
+			{
+				if (M == R)
+				{
+					int h = 255 * (G - B) / C;
+
+					if (h > 127) Hc = 3;			// yellow
+					else if (h < -128) Hc = 5;		// magenta
+					else Hc = 1;					// red
+				}
+				else if (M == G)
+				{
+					int h = 255 * (B - R) / C;
+
+					if (h > 127) Hc = 6;			// cyan
+					else if (h < -128) Hc = 3;		// yellow
+					else Hc = 2;					// green
+				}
+				else if (M == B)
+				{
+					int h = 255 * (R - G) / C;
+
+					if (h > 127) Hc = 5;			// magenta
+					else if (h < -128) Hc = 6;		// cyan
+					else Hc = 2;					// blue
+				}
+			}
+
+			unsigned char Y = (unsigned char)(0.2126f * R + 0.7152f * G + 0.0722f * B);		// Luma (screen brightess)
+
+			unsigned char V = M;					// Value
+
+			int S = 0;								// Saturation
+
+			if (C != 0)
+			{
+				S = 255 * C / V;
+			}
+
+			// If saturation too low assume grey
+
+			if (S < sat)
+			{
+				// Grey
+				// Adjust colour palette for grey scale
+				// Map value to colour ramp - change RAMP!
+
+				unsigned char Gc = 0;
+				int midpoint = (white - black) / 2;
+
+				if (V < black)
+					Gc = 0;
+				else if (V < (black + midpoint))
+					Gc = 4;			// blue
+				else if (V < white)
+					Gc = 6;			// cyan
+				else
+					Gc = 7;			// white		// could use yellow?
+
+				r = GET_RED_FROM_COLOUR(Gc);
+				g = GET_GREEN_FROM_COLOUR(Gc);
+				b = GET_BLUE_FROM_COLOUR(Gc);
+			}
+			else
+			{
+				// Colour
+				// If Value is too low then assume black
+
+				if (V < value)
+				{
+					// Black
+					r = g = b = 0;
+				}
+				else
+				{
+					// Not black = full colour
+
+					int c = match_closest_palette_colour(R, G, B);
+
+					r = GET_RED_FROM_COLOUR(c);
+					g = GET_GREEN_FROM_COLOUR(c);
+					b = GET_BLUE_FROM_COLOUR(c);
+				}
+			}
+
+			src(x, y, 0) = r;
+			src(x, y, 1) = g;
+			src(x, y, 2) = b;
+		}
+
+		//
+		// Save output of colour conversion for debug
+		//
+
+		if (simg)
+		{
+			if (verbose)
+			{
+				printf("Saving test image '%s_quant.png'...\n", input_name);
+			}
+
+			sprintf(filename, "%s_quant.png", input_name);
+			src.save(filename);
+		}
 	}
 
 	//
 	// Resize!
 	//
 
-	// Calculate frame size - adjust to width
-	int pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
-	int pixel_height = pixel_width * IMAGE_H / IMAGE_W;
-	if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
+	int pixel_width, pixel_height;
 
-	// Adjust to height
-	if (pixel_height > MODE7_PIXEL_H)
-	{
-		pixel_height = MODE7_PIXEL_H;
-		pixel_width = pixel_height * IMAGE_W / IMAGE_H;
-
-		if (pixel_width % 1) pixel_width++;
-
-		// Need to handle reset of background if frame_width < MODE7_WIDTH
-	}
-
-	// Resize image to this size
-
-	if (verbose)
-	{
-		printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
-	}
-
-	src.resize(pixel_width, pixel_height);
-
-	// Save test images for debug
-
-	if (simg)
+	if (no_scale)
 	{
 		if (verbose)
 		{
-			printf("Saving test image '%s_small.png'...\n", input_name);
+			printf("Leaving size as %d x %d pixels...\n", src._width, src._height);
 		}
 
-		sprintf(filename, "%s_small.png", input_name);
-		src.save(filename);
+		pixel_width = src._width;
+		pixel_height = src._height;
+	}
+	else
+	{
+		// Calculate frame size - adjust to width
+		pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
+		pixel_height = pixel_width * IMAGE_H / IMAGE_W;
+		if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
+
+		// Adjust to height
+		if (pixel_height > MODE7_PIXEL_H)
+		{
+			pixel_height = MODE7_PIXEL_H;
+			pixel_width = pixel_height * IMAGE_W / IMAGE_H;
+
+			if (pixel_width % 1) pixel_width++;
+
+			// Need to handle reset of background if frame_width < MODE7_WIDTH
+		}
+
+		// Resize image to this size
+
+		if (verbose)
+		{
+			printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
+		}
+
+		src.resize(pixel_width, pixel_height);
+
+		// Save test images for debug
+
+		if (simg)
+		{
+			if (verbose)
+			{
+				printf("Saving test image '%s_small.png'...\n", input_name);
+			}
+
+			sprintf(filename, "%s_small.png", input_name);
+			src.save(filename);
+		}
 	}
 
 	//

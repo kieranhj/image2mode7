@@ -64,6 +64,7 @@ static unsigned char output[MODE7_WIDTH];
 static bool global_use_hold = true;
 static bool global_use_fill = true;
 static bool global_use_geometric = true;
+static bool global_try_all = false;
 
 static int frame_width;
 static int frame_height;
@@ -354,7 +355,7 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 
 	// See if there's a better character by trying all 64 possible combinations
 
-	for (int i = 0; i < 64; i++)
+	for (int i = 1; i < 64; i++)
 	{
 		unsigned char screen_char = (MODE7_BLANK) | (i & 0x1f) | ((i & 0x20) << 1);
 
@@ -382,7 +383,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 
 	//	printf("get_error_for_remainder_of_line(%d, %d, %d, %d, %d, %d)\n", x7, y7, fg, bg, hold_char, prev_char);
 
-	unsigned char graphic_char = get_graphic_char_from_image(x7, y7, fg, bg);
+	unsigned char graphic_char = global_try_all ? 'Y' : get_graphic_char_from_image(x7, y7, fg, bg);
 	int lowest_error = INT_MAX;
 	unsigned char lowest_char = 'Z';
 
@@ -545,28 +546,58 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 		}
 	}
 
-	// Try our graphic character
-	if (graphic_char != MODE7_BLANK)
+	if (global_try_all)
 	{
-		int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
-		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+		// Try every possible graphic character...
 
-		if (total_error_in_state[newstate][x7 + 1] == -1)
+		for (int i = 1; i < 64; i++)
 		{
-			total_error_in_state[newstate][x7 + 1] = remaining;
-			char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
-		}
+			graphic_char = (MODE7_BLANK) | (i & 0x1f) | ((i & 0x20) << 1);
 
-		error += remaining;
+			int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+			int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
 
-		if (error < lowest_error)
-		{
-			lowest_error = error;
-			lowest_char = graphic_char;
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
+
+			error += remaining;
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				lowest_char = graphic_char;
+			}
 		}
 	}
+	else
+	{
+		// Try our graphic character (if it's not blank)
 
+		if (graphic_char != MODE7_BLANK)
+		{
+			int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+			int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+			int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
+
+			if (total_error_in_state[newstate][x7 + 1] == -1)
+			{
+				total_error_in_state[newstate][x7 + 1] = remaining;
+				char_for_xpos_in_state[newstate][x7 + 1] = output[x7 + 1];
+			}
+
+			error += remaining;
+
+			if (error < lowest_error)
+			{
+				lowest_error = error;
+				lowest_char = graphic_char;
+			}
+		}
+	}
 	//	printf("(%d, %d) returning char=%d lowest error=%d\n", x7, y7, lowest_char, lowest_error);
 
 	output[x7] = lowest_char;
@@ -606,15 +637,16 @@ int main(int argc, char **argv)
 	const int value = cimg_option("-val", 64, "Value threshold (below this colour is considered black)");
 	const int black = cimg_option("-black", 64, "Black threshold (grey below this considered pure black - above is colour brightness ramp)");
 	const int white = cimg_option("-white", 128, "White threshold (grey above this considered pure white - below is colour brightness ramp)");
+	const bool use_quant = cimg_option("-quant", false, "Quantise the input image to 3-bit MODE 7 palette using HSV params above");
 	const bool no_hold = cimg_option("-nohold", false, "Disallow Hold Graphics control code");
 	const bool no_fill = cimg_option("-nofill", false, "Disallow New Background control code");
-	const bool no_quant = cimg_option("-noquant", false, "Don't quantise the input image to 3-bit MODE 7 palette");
 	const bool no_scale = cimg_option("-noscale", false, "Don't scale the image image to MODE 7 resolution");
-	const bool simg = cimg_option("-test", false, "Save test image (post-quantisation) before Teletext conversion");
-	const bool inf = cimg_option("-inf", false, "Save inf file for image");
+	const bool simg = cimg_option("-test", false, "Save test images (quantised / scaled) before Teletext conversion");
+	const bool inf = cimg_option("-inf", false, "Save inf file for output file");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
 	const bool error_lookup = cimg_option("-lookup", false, "Use lookup table for colour error (default is geometric distance)");
+	const bool try_all = cimg_option("-tryall", false, "Calculate full line error for every possible graphics character (64x slower)");
 
 	char filename[256];
 	FILE *file;
@@ -625,6 +657,7 @@ int main(int argc, char **argv)
 	global_use_hold = !no_hold;
 	global_use_fill = !no_fill;
 	global_use_geometric = !error_lookup;
+	global_try_all = try_all;
 
 	if (verbose)
 	{
@@ -637,7 +670,7 @@ int main(int argc, char **argv)
 	// Colour conversion etc.
 	//
 
-	if (no_quant)
+	if (!use_quant)
 	{
 		if (verbose)
 		{
@@ -836,6 +869,8 @@ int main(int argc, char **argv)
 	// Conversion to MODE 7
 	//
 
+	int frame_error = 0;
+
 	frame_width = pixel_width / 2;
 	frame_height = pixel_height / 3;
 
@@ -851,34 +886,11 @@ int main(int argc, char **argv)
 	{
 		int y = IMAGE_Y_FROM_Y7(y7);
 
-#if 0
-		for(int x7 = FRAME_FIRST_COLUMN; x7 < (FRAME_FIRST_COLUMN + FRAME_WIDTH); x7++)
-		{
-			int x = IMAGE_X_FROM_X7(x7);
-
-			// Just indicate pixels or not to speed up MODE 7 conversion
-			mode7[(y7 * MODE7_WIDTH) + (x7)] = (get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2))
-				|| get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2))
-				|| get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2))
-				|| get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2))
-				|| get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2))
-				|| get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2))) ? 255 : 32;
-
-			x++;
-		}
-#endif
-
-		// Here we have:
-		// pixel data turned into graphic characters in mode7 array - actually just an indication if pixels in cell
-		// counts of each colour in a character cell - not useful?
-		// proposed fg and bg colour per character cell - could be used as start of line control code?
-
 		// Reset state as starting new character row
 		// State = fg colour + bg colour + hold character + prev character
 		// For each character cell on this line
 		// Do we have pixels or not?
 		// If we have pixels then need to decide whether is it better to replace this cell with a control code or keep pixels
-		// If we don't have pixels then need to decide whether it is better to insert a control code or leave empty
 		// Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
 		// "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
 
@@ -910,7 +922,7 @@ int main(int argc, char **argv)
 
 		if (verbose)
 		{
-			printf("Row %d: best start colour = %d\n", y7, min_colour);
+			printf("[%d] Start colour=%d ", y7, min_colour);
 		}
 
 		// Set this state before frame begins
@@ -921,8 +933,10 @@ int main(int argc, char **argv)
 
 		if (verbose)
 		{
-			printf("Row %d: total error for line = %d\n", y7, error);
+			printf("Line error=%d\n", error);
 		}
+
+		frame_error += error;
 
 		// Store first character
 		char_for_xpos_in_state[state][FRAME_FIRST_COLUMN] = output[FRAME_FIRST_COLUMN];
@@ -953,6 +967,7 @@ int main(int argc, char **argv)
 
 	if (verbose)
 	{
+		printf("Total frame error = %d\n", frame_error);
 		printf("MODE 7 frame size = %d bytes\n", FRAME_SIZE);
 	}
 

@@ -63,7 +63,7 @@ static unsigned char output[MODE7_WIDTH];
 
 static bool global_use_hold = true;
 static bool global_use_fill = true;
-static bool global_use_geometric = false;
+static bool global_use_geometric = true;
 
 static int frame_width;
 static int frame_height;
@@ -215,7 +215,7 @@ int error_function(int screen_r, int screen_g, int screen_b, int image_r, int im
 {
 	if (global_use_geometric)
 	{
-		return (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b)));		// / (255 * 255);
+		return (((screen_r - image_r) * (screen_r - image_r)) + ((screen_g - image_g) * (screen_g - image_g)) + ((screen_b - image_b) * (screen_b - image_b))); // / (255 * 255);
 	}
 	else
 	{
@@ -228,9 +228,8 @@ int get_error_for_screen_char(int x7, int y7, unsigned char screen_char, int fg,
 {
 	int x = IMAGE_X_FROM_X7(x7);
 	int y = IMAGE_Y_FROM_Y7(y7);
-	int error = 0;
 
-	int screen_c, image_c, error_c;
+	int error = 0;
 
 	unsigned char screen_r, screen_g, screen_b;
 	unsigned char image_r, image_g, image_b;
@@ -329,34 +328,6 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 
 unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 {
-#if 0
-	int x = IMAGE_X_FROM_X7(x7);
-	int y = IMAGE_Y_FROM_Y7(y7);
-
-	unsigned char graphic_char = 0;
-	unsigned char current_char = mode7[(y7 * MODE7_WIDTH) + (x7)];
-
-	if (current_char != MODE7_BLANK)
-	{
-		// We have some pixels in this cell
-		// Calculate graphic character - if pixel == bg colour then off else on
-
-		graphic_char = 32 +																										// bit 5 always set!
-			
-			(get_colour_from_rgb(src(x, y, 0),		 src(x, y, 1),			src(x, y, 2))			== bg ? 0 : 1)			// (x,y) = bit 0
-			+ (get_colour_from_rgb(src(x + 1, y, 0),	 src(x + 1, y, 1),		src(x + 1, y, 2))		== bg ? 0 : 2)			// (x+1,y) = bit 1
-			+ (get_colour_from_rgb(src(x, y + 1, 0),	 src(x, y + 1, 1),		src(x, y + 1, 2))		== bg ? 0 : 4)			// (x,y+1) = bit 2
-			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1),	src(x + 1, y + 1, 2))	== bg ? 0 : 8)			// (x+1,y+1) = bit 3
-			+ (get_colour_from_rgb(src(x, y + 2, 0),	 src(x, y + 2, 1),		src(x, y + 2, 2))		== bg ? 0 : 16)			// (x,y+2) = bit 4
-			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1),	src(x + 1, y + 2, 2))	== bg ? 0 : 64);		// (x+1,y+2) = bit 6
-	}
-	else
-	{
-		graphic_char = MODE7_BLANK;
-	}
-
-	return graphic_char;
-#else
 	// Try every possible combination of pixels to get lowest error
 
 	int min_error = INT_MAX;
@@ -370,12 +341,12 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 	// All other pixels are foreground
 
 	min_char = 32 +																										// bit 5 always set!
-			+(get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)			// (x,y) = bit 0
-			+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)			// (x+1,y) = bit 1
-			+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)			// (x,y+1) = bit 2
-			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)			// (x+1,y+1) = bit 3
-			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)			// (x,y+2) = bit 4
-			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);		// (x+1,y+2) = bit 6
+			+ (get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)								// (x,y) = bit 0
+			+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)					// (x+1,y) = bit 1
+			+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)					// (x,y+1) = bit 2
+			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)		// (x+1,y+1) = bit 3
+			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)				// (x,y+2) = bit 4
+			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);	// (x+1,y+2) = bit 6
 
 	// Calculate error for this character
 
@@ -397,7 +368,6 @@ unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg)
 	}
 
 	return min_char;
-#endif
 }
 
 int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mode, unsigned char last_gfx_char)
@@ -423,18 +393,18 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 
 	// Graphic char (if set)
 	// Stay blank (if not)
-	// Set graphic colour (colour != fg) - 6
+	// Set graphic colour (colour != fg) x6
 	// Fill (if bg != fg)
 	// No fill (if bg != 0)
 	// Hold graphics (if hold_mode == false)
 	// Release graphics (if hold_mode == true)
 
-	// If we have a graphic character or blank we could use this!
-	if (graphic_char == MODE7_BLANK)
+	// Always try a blank first
+	if (MODE7_BLANK)
 	{
-		int newstate = GET_STATE(fg, bg, hold_mode, graphic_char);
-		int error = get_error_for_char(x7, y7, graphic_char, fg, bg, hold_mode, graphic_char);
-		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, graphic_char);
+		int newstate = GET_STATE(fg, bg, hold_mode, MODE7_BLANK);
+		int error = get_error_for_char(x7, y7, MODE7_BLANK, fg, bg, hold_mode, MODE7_BLANK);
+		int remaining = get_error_for_remainder_of_line(x7 + 1, y7, fg, bg, hold_mode, MODE7_BLANK);
 
 		if (total_error_in_state[newstate][x7 + 1] == -1)
 		{
@@ -447,7 +417,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 		if (error < lowest_error)
 		{
 			lowest_error = error;
-			lowest_char = graphic_char;
+			lowest_char = MODE7_BLANK;
 		}
 	}
 
@@ -575,6 +545,7 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 		}
 	}
 
+	// Try our graphic character
 	if (graphic_char != MODE7_BLANK)
 	{
 		int newstate = GET_STATE(fg, bg, hold_mode, global_use_hold ? graphic_char : MODE7_BLANK);
@@ -643,7 +614,7 @@ int main(int argc, char **argv)
 	const bool inf = cimg_option("-inf", false, "Save inf file for image");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
-	const bool error_geo = cimg_option("-geo", false, "Use geometric distance as error (otherwise lookup table)");
+	const bool error_lookup = cimg_option("-lookup", false, "Use lookup table for colour error (default is geometric distance)");
 
 	char filename[256];
 	FILE *file;
@@ -653,7 +624,7 @@ int main(int argc, char **argv)
 
 	global_use_hold = !no_hold;
 	global_use_fill = !no_fill;
-	global_use_geometric = error_geo;
+	global_use_geometric = !error_lookup;
 
 	if (verbose)
 	{

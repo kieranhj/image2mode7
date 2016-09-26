@@ -654,14 +654,14 @@ int get_error_for_remainder_of_line(int x7, int y7, int fg, int bg, bool hold_mo
 	return lowest_error;
 }
 
-int match_closest_palette_colour(unsigned char r, unsigned char g, unsigned char b)
+int match_closest_palette_colour(unsigned char r, unsigned char g, unsigned char b, bool interlace)
 {
 	int min_error = INT_MAX;
 	int min_colour = -1;
 
 	for (int c = 0; c < 8; c++)
 	{
-		for (int d = c; d < 8; d++)
+		for (int d = c; interlace && d < 8; d++)
 		{
 			int cr = (GET_RED_FROM_COLOUR(c) + GET_RED_FROM_COLOUR(d) ) / 2;
 			int cg = (GET_GREEN_FROM_COLOUR(c) + GET_GREEN_FROM_COLOUR(d)) / 2;
@@ -685,11 +685,11 @@ int main(int argc, char **argv)
 	cimg_usage("MODE 7 image convertor.\n\nUsage : image2mode7 [options]");
 	const char *const input_name = cimg_option("-i", (char*)0, "Input filename");
 	const char *const output_name = cimg_option("-o", (char*)0, "Output filename");
-	const int sat = cimg_option("-sat", 64, "Saturation threshold (below this colour is considered grey)");
-	const int value = cimg_option("-val", 64, "Value threshold (below this colour is considered black)");
+	int sat = cimg_option("-sat", 64, "Saturation threshold (below this colour is considered grey)");
+	int value = cimg_option("-val", 64, "Value threshold (below this colour is considered black)");
 	const int black = cimg_option("-black", 64, "Black threshold (grey below this considered pure black - above is colour brightness ramp)");
 	const int white = cimg_option("-white", 128, "White threshold (grey above this considered pure white - below is colour brightness ramp)");
-	const bool use_quant = cimg_option("-quant", false, "Quantise the input image to 3-bit MODE 7 palette using HSV params above");
+	bool use_quant = cimg_option("-quant", false, "Quantise the input image to 36 colour interlaced MODE 7 palette (zero HSV params above)");
 	const bool no_hold = cimg_option("-nohold", false, "Disallow Hold Graphics control code");
 	const bool no_fill = cimg_option("-nofill", false, "Disallow New Background control code");
 	const bool use_sep = cimg_option("-sep", false, "Enable Separated Graphics control code");
@@ -701,6 +701,9 @@ int main(int argc, char **argv)
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
 	const bool error_lookup = cimg_option("-lookup", false, "Use lookup table for colour error (default is geometric distance)");
 	const bool try_all = cimg_option("-tryall", false, "Calculate full line error for every possible graphics character (64x slower)");
+	const bool do_interlace = cimg_option("-interlace", false, "Decompose quantised image into interlaced frames (convert the first, save the second)");
+	
+	CImg<unsigned char> fieldB;
 
 	char filename[256];
 	FILE *file;
@@ -716,12 +719,24 @@ int main(int argc, char **argv)
 	global_use_geometric = !error_lookup;
 	global_try_all = try_all;
 
+	if (do_interlace)
+	{
+		use_quant = true;
+		sat = 0;
+		value = 0;
+	}
+
 	if (verbose)
 	{
 		printf("Loading image file '%s'...\n", input_name);
 	}
 
 	src.assign(input_name);
+
+	if (do_interlace)
+	{
+		fieldB.assign(input_name);
+	}
 
 	//
 	// Colour conversion etc.
@@ -836,7 +851,7 @@ int main(int argc, char **argv)
 				{
 					// Not black = full colour
 
-					int u = match_closest_palette_colour(R, G, B);
+					int u = match_closest_palette_colour(R, G, B, do_interlace);
 
 					int c = u / 8;
 					int d = u % 8;
@@ -844,6 +859,21 @@ int main(int argc, char **argv)
 					r = (GET_RED_FROM_COLOUR(c) + GET_RED_FROM_COLOUR(d)) / 2;
 					g = (GET_GREEN_FROM_COLOUR(c) + GET_GREEN_FROM_COLOUR(d)) / 2;
 					b = (GET_BLUE_FROM_COLOUR(c) + GET_BLUE_FROM_COLOUR(d)) / 2;
+
+					// We have the colour we'd like - now decompose into two images
+
+					// Field A
+					r = GET_RED_FROM_COLOUR(c);
+					g = GET_GREEN_FROM_COLOUR(c);
+					b = GET_BLUE_FROM_COLOUR(c);
+
+					if (do_interlace)
+					{
+						// Field B
+						fieldB(x, y, 0) = GET_RED_FROM_COLOUR(d);
+						fieldB(x, y, 1) = GET_GREEN_FROM_COLOUR(d);
+						fieldB(x, y, 2) = GET_BLUE_FROM_COLOUR(d);
+					}
 				}
 			}
 
@@ -865,6 +895,12 @@ int main(int argc, char **argv)
 
 			sprintf(filename, "%s_quant.png", input_name);
 			src.save(filename);
+
+			if (do_interlace)
+			{
+				sprintf(filename, "%s_quant_B.png", input_name);
+				fieldB.save(filename);
+			}
 		}
 	}
 
@@ -911,6 +947,11 @@ int main(int argc, char **argv)
 
 		src.resize(pixel_width, pixel_height);
 
+		if( do_interlace )
+		{
+			fieldB.resize(pixel_width, pixel_height);
+		}
+
 		// Save test images for debug
 
 		if (simg)
@@ -923,6 +964,19 @@ int main(int argc, char **argv)
 			sprintf(filename, "%s_small.png", input_name);
 			src.save(filename);
 		}
+	}
+
+	// Save interlaced image for field B
+
+	if (do_interlace)
+	{
+		if (verbose)
+		{
+			printf("Writing INTERLACE frame '%s_field_B.png'...\n", input_name);
+		}
+
+		sprintf(filename, "%s_field_B.png", input_name);
+		fieldB.save(filename);
 	}
 
 	//

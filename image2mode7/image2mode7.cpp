@@ -51,6 +51,8 @@ using namespace cimg_library;
 #define IMAGE_X_FROM_X7(x7)	(((x7) - FRAME_FIRST_COLUMN) * 2)
 #define IMAGE_Y_FROM_Y7(x7)	((y7) * 3)
 
+#define MIN(A,B)			((A)<(B)?(A):(B))
+#define MAX(A,B)			((A)>(B)?(A):(B))
 #define MAX_3(A,B,C)		((A)>(B)?((A)>(C)?(A):(C)):(B)>(C)?(B):(C))
 #define MIN_3(A,B,C)		((A)<(B)?((A)<(C)?(A):(C)):(B)<(C)?(B):(C))
 
@@ -70,9 +72,35 @@ static bool global_use_geometric = true;
 static bool global_try_all = false;
 
 static int global_sep_fg_factor = 128;
+static int global_dither = 0;
 
 static int frame_width;
 static int frame_height;
+
+static int dither2[4] = {
+	2, 6,
+	8, 4
+};
+
+static int dither23[6] = {
+	2, 8,
+	12, 4,
+	6, 10
+};
+
+static int dither3[9] = {
+	2, 16, 8,
+	14, 12, 6,
+	10, 4, 18
+};
+
+static int dither4[16] = {
+	2, 18, 6, 22,
+	26, 10, 30, 14,
+	8, 24, 4, 20,
+	32, 16, 28, 12
+};
+
 
 void clear_error_char_arrays(void)
 {
@@ -249,6 +277,12 @@ int get_error_for_screen_pixel(int x, int y, int screen_bit, int fg, int bg, boo
 	int screen_r, screen_g, screen_b;
 	int image_r, image_g, image_b;
 
+	// These are the pixels in the image
+
+	image_r = src(x, y, 0);
+	image_g = src(x, y, 1);
+	image_b = src(x, y, 2);
+
 	// These are the pixels that will get written to the screen
 
 	if (screen_bit)
@@ -272,12 +306,6 @@ int get_error_for_screen_pixel(int x, int y, int screen_bit, int fg, int bg, boo
 		screen_g = GET_GREEN_FROM_COLOUR(bg);
 		screen_b = GET_BLUE_FROM_COLOUR(bg);
 	}
-
-	// These are the pixels in the image
-
-	image_r = src(x, y, 0);
-	image_g = src(x, y, 1);
-	image_b = src(x, y, 2);
 
 	// Calculate the error between them
 
@@ -331,44 +359,39 @@ int get_error_for_char(int x7, int y7, unsigned char proposed_char, int fg, int 
 
 unsigned char get_graphic_char_from_image(int x7, int y7, int fg, int bg, bool sep)
 {
-	// Try every possible combination of pixels to get lowest error
-
 	int min_error = INT_MAX;
-	unsigned char min_char = 0;
+	int on_error, off_error;
+	unsigned char min_char = 32;
+	unsigned char direct_char = 0;
 
 	int x = IMAGE_X_FROM_X7(x7);
 	int y = IMAGE_Y_FROM_Y7(y7);
 
-	// This is our default graphics character
-	// All pixels matching background are background
-	// All other pixels are foreground
+	// Try every possible combination of pixels to get lowest error
 
-	min_char = 32 +																										// bit 5 always set!
-			+ (get_colour_from_rgb(src(x, y, 0), src(x, y, 1), src(x, y, 2)) == bg ? 0 : 1)								// (x,y) = bit 0
-			+ (get_colour_from_rgb(src(x + 1, y, 0), src(x + 1, y, 1), src(x + 1, y, 2)) == bg ? 0 : 2)					// (x+1,y) = bit 1
-			+ (get_colour_from_rgb(src(x, y + 1, 0), src(x, y + 1, 1), src(x, y + 1, 2)) == bg ? 0 : 4)					// (x,y+1) = bit 2
-			+ (get_colour_from_rgb(src(x + 1, y + 1, 0), src(x + 1, y + 1, 1), src(x + 1, y + 1, 2)) == bg ? 0 : 8)		// (x+1,y+1) = bit 3
-			+ (get_colour_from_rgb(src(x, y + 2, 0), src(x, y + 2, 1), src(x, y + 2, 2)) == bg ? 0 : 16)				// (x,y+2) = bit 4
-			+ (get_colour_from_rgb(src(x + 1, y + 2, 0), src(x + 1, y + 2, 1), src(x + 1, y + 2, 2)) == bg ? 0 : 64);	// (x+1,y+2) = bit 6
+	on_error = get_error_for_screen_pixel(x, y, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x, y, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 1 : 0);
 
-	// Calculate error for this character
+	on_error = get_error_for_screen_pixel(x + 1, y, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x + 1, y, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 2 : 0);
 
-	min_error = get_error_for_screen_char(x7, y7, min_char, fg, bg, sep);
+	on_error = get_error_for_screen_pixel(x, y + 1, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x, y + 1, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 4 : 0);
 
-	// See if there's a better character by trying all 64 possible combinations
+	on_error = get_error_for_screen_pixel(x + 1, y + 1, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x + 1, y + 1, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 8 : 0);
 
-	for (int i = 1; i < 64; i++)
-	{
-		unsigned char screen_char = (MODE7_BLANK) | (i & 0x1f) | ((i & 0x20) << 1);
+	on_error = get_error_for_screen_pixel(x, y + 2, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x, y + 2, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 16 : 0);
 
-		int error = get_error_for_screen_char(x7, y7, screen_char, fg, bg, sep);
-
-		if (error < min_error)
-		{
-			min_error = error;
-			min_char = screen_char;
-		}
-	}
+	on_error = get_error_for_screen_pixel(x + 1, y + 2, 1, fg, bg, sep);
+	off_error = get_error_for_screen_pixel(x + 1, y + 2, 0, fg, bg, sep);
+	min_char += (on_error < off_error ? 64 : 0);
 
 	return min_char;
 }
@@ -689,15 +712,16 @@ int main(int argc, char **argv)
 	const bool use_quant = cimg_option("-quant", false, "Quantise the input image to 3-bit MODE 7 palette using HSV params above");
 	const bool no_hold = cimg_option("-nohold", false, "Disallow Hold Graphics control code");
 	const bool no_fill = cimg_option("-nofill", false, "Disallow New Background control code");
-	const bool use_sep = cimg_option("-sep", false, "Enable Separated Graphics control code");
+	const bool use_sep = cimg_option("-sep", false, "*EXPERIMENTAL* Enable Separated Graphics control code");
 	const int sep_factor = cimg_option("-fore", 128, "Contribution factor of foreground vs background colour for separated graphics");
 	const bool no_scale = cimg_option("-noscale", false, "Don't scale the image image to MODE 7 resolution");
 	const bool simg = cimg_option("-test", false, "Save test images (quantised / scaled) before Teletext conversion");
 	const bool inf = cimg_option("-inf", false, "Save inf file for output file");
 	const bool verbose = cimg_option("-v", false, "Verbose output");
 	const bool url = cimg_option("-url", false, "Spit out URL for edit.tf");
-	const bool error_lookup = cimg_option("-lookup", false, "Use lookup table for colour error (default is geometric distance)");
-	const bool try_all = cimg_option("-tryall", false, "Calculate full line error for every possible graphics character (64x slower)");
+	const bool error_lookup = cimg_option("-lookup", false, "*EXPERIMENTAL* Use lookup table for colour error (default is geometric distance)");
+	const bool try_all = cimg_option("-slow", false, "Calculate full line error for every possible graphics character (64x slower)");
+	const int dither = cimg_option("-dither", 0, "Enable ordered dithering (2=2x2 3=3x3 4=4x4 5=2x3 matrix)");
 
 	char filename[256];
 	FILE *file;
@@ -917,6 +941,76 @@ int main(int argc, char **argv)
 			sprintf(filename, "%s_small.png", input_name);
 			src.save(filename);
 		}
+	}
+
+	//
+	// Dithering!
+	//
+
+	if (dither > 1 && dither <= 5)
+	{
+		int modx = dither, mody = dither;
+
+		if (dither == 5)
+		{
+			modx = 2;
+			mody = 3;
+		}
+
+		int divisor = 2 * ((modx * mody) + 1);
+		int subtract = divisor / 2;
+		int *table = NULL;
+
+		if (verbose)
+		{
+			printf("Ordered dither %dx%d (divisor=%d subtract=%d)...\n", modx, mody, divisor, subtract);
+		}
+
+		switch (dither)
+		{
+		case 2:
+			table = dither2;
+			break;
+
+		case 3:
+			table = dither3;
+			break;
+
+		case 4:
+			table = dither4;
+			break;
+
+		case 5:
+			table = dither23;
+			break;
+
+		default:
+			break;
+		}
+
+		cimg_forXY(src, x, y)
+		{
+			int image_r = src(x, y, 0);
+			int image_g = src(x, y, 1);
+			int image_b = src(x, y, 2);
+
+			image_r = src(x, y, 0) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+			image_r = MIN(image_r, 255);
+			image_r = MAX(image_r, 0);
+
+			image_g = src(x, y, 1) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+			image_g = MIN(image_g, 255);
+			image_g = MAX(image_g, 0);
+
+			image_b = src(x, y, 2) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+			image_b = MIN(image_b, 255);
+			image_b = MAX(image_b, 0);
+
+			src(x, y, 0) = image_r;
+			src(x, y, 1) = image_g;
+			src(x, y, 2) = image_b;
+		}
+
 	}
 
 	//

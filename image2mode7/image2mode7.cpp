@@ -745,6 +745,145 @@ int main(int argc, char **argv)
 	src.assign(input_name);
 
 	//
+	// Resize!
+	//
+
+	int pixel_width, pixel_height;
+
+	if (no_scale)
+	{
+		if (verbose)
+		{
+			printf("Leaving size as %d x %d pixels...\n", src._width, src._height);
+		}
+
+		pixel_width = src._width;
+		pixel_height = src._height;
+	}
+	else
+	{
+		// Calculate frame size - adjust to width
+		pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
+		pixel_height = pixel_width * IMAGE_H / IMAGE_W;
+		if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
+
+		// Adjust to height
+		if (pixel_height > MODE7_PIXEL_H)
+		{
+			pixel_height = MODE7_PIXEL_H;
+			pixel_width = pixel_height * IMAGE_W / IMAGE_H;
+
+			if (pixel_width % 1) pixel_width++;
+
+			// Need to handle reset of background if frame_width < MODE7_WIDTH
+		}
+
+		// Resize image to this size
+
+		if (verbose)
+		{
+			printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
+		}
+
+		src.resize(pixel_width, pixel_height);
+
+		// Save test images for debug
+
+		if (simg)
+		{
+			if (verbose)
+			{
+				printf("Saving test image '%s_small.png'...\n", input_name);
+			}
+
+			sprintf(filename, "%s_small.png", input_name);
+			src.save(filename);
+		}
+	}
+
+	//
+	// Dithering!
+	//
+
+	if (dither > 1 && dither <= 5)
+	{
+		int modx = dither, mody = dither;
+
+		if (dither == 5)
+		{
+			modx = 2;
+			mody = 3;
+		}
+
+		int divisor = 2 * ((modx * mody) + 1);
+		int subtract = divisor / 2;
+		int *table = NULL;
+
+		if (verbose)
+		{
+			printf("Ordered dither %dx%d (divisor=%d subtract=%d)...\n", modx, mody, divisor, subtract);
+		}
+
+		switch (dither)
+		{
+		case 2:
+			table = dither2;
+			break;
+
+		case 3:
+			table = dither3;
+			break;
+
+		case 4:
+			table = dither4;
+			break;
+
+		case 5:
+			table = dither23;
+			break;
+
+		default:
+			break;
+		}
+
+		cimg_forXY(src, x, y)
+		{
+			int image_r = src(x, y, 0);
+			int image_g = src(x, y, 1);
+			int image_b = src(x, y, 2);
+
+			image_r = src(x, y, 0) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+			image_r = MIN(image_r, 255);
+			image_r = MAX(image_r, 0);
+
+			image_g = src(x, y, 1) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+			image_g = MIN(image_g, 255);
+			image_g = MAX(image_g, 0);
+
+			image_b = src(x, y, 2) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+			image_b = MIN(image_b, 255);
+			image_b = MAX(image_b, 0);
+
+			src(x, y, 0) = image_r;
+			src(x, y, 1) = image_g;
+			src(x, y, 2) = image_b;
+		}
+
+		// Save test images for debug
+
+		if (simg)
+		{
+			if (verbose)
+			{
+				printf("Saving test image '%s_dither.png'...\n", input_name);
+			}
+
+			sprintf(filename, "%s_dither.png", input_name);
+			src.save(filename);
+		}
+	}
+
+	//
 	// Colour conversion etc.
 	//
 
@@ -884,133 +1023,6 @@ int main(int argc, char **argv)
 			sprintf(filename, "%s_quant.png", input_name);
 			src.save(filename);
 		}
-	}
-
-	//
-	// Resize!
-	//
-
-	int pixel_width, pixel_height;
-
-	if (no_scale)
-	{
-		if (verbose)
-		{
-			printf("Leaving size as %d x %d pixels...\n", src._width, src._height);
-		}
-
-		pixel_width = src._width;
-		pixel_height = src._height;
-	}
-	else
-	{
-		// Calculate frame size - adjust to width
-		pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
-		pixel_height = pixel_width * IMAGE_H / IMAGE_W;
-		if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
-
-		// Adjust to height
-		if (pixel_height > MODE7_PIXEL_H)
-		{
-			pixel_height = MODE7_PIXEL_H;
-			pixel_width = pixel_height * IMAGE_W / IMAGE_H;
-
-			if (pixel_width % 1) pixel_width++;
-
-			// Need to handle reset of background if frame_width < MODE7_WIDTH
-		}
-
-		// Resize image to this size
-
-		if (verbose)
-		{
-			printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
-		}
-
-		src.resize(pixel_width, pixel_height);
-
-		// Save test images for debug
-
-		if (simg)
-		{
-			if (verbose)
-			{
-				printf("Saving test image '%s_small.png'...\n", input_name);
-			}
-
-			sprintf(filename, "%s_small.png", input_name);
-			src.save(filename);
-		}
-	}
-
-	//
-	// Dithering!
-	//
-
-	if (dither > 1 && dither <= 5)
-	{
-		int modx = dither, mody = dither;
-
-		if (dither == 5)
-		{
-			modx = 2;
-			mody = 3;
-		}
-
-		int divisor = 2 * ((modx * mody) + 1);
-		int subtract = divisor / 2;
-		int *table = NULL;
-
-		if (verbose)
-		{
-			printf("Ordered dither %dx%d (divisor=%d subtract=%d)...\n", modx, mody, divisor, subtract);
-		}
-
-		switch (dither)
-		{
-		case 2:
-			table = dither2;
-			break;
-
-		case 3:
-			table = dither3;
-			break;
-
-		case 4:
-			table = dither4;
-			break;
-
-		case 5:
-			table = dither23;
-			break;
-
-		default:
-			break;
-		}
-
-		cimg_forXY(src, x, y)
-		{
-			int image_r = src(x, y, 0);
-			int image_g = src(x, y, 1);
-			int image_b = src(x, y, 2);
-
-			image_r = src(x, y, 0) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
-			image_r = MIN(image_r, 255);
-			image_r = MAX(image_r, 0);
-
-			image_g = src(x, y, 1) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
-			image_g = MIN(image_g, 255);
-			image_g = MAX(image_g, 0);
-
-			image_b = src(x, y, 2) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
-			image_b = MIN(image_b, 255);
-			image_b = MAX(image_b, 0);
-
-			src(x, y, 0) = image_r;
-			src(x, y, 1) = image_g;
-			src(x, y, 2) = image_b;
-		}
-
 	}
 
 	//

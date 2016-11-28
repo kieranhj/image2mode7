@@ -722,6 +722,7 @@ int main(int argc, char **argv)
 	const bool error_lookup = cimg_option("-lookup", false, "*EXPERIMENTAL* Use lookup table for colour error (default is geometric distance)");
 	const bool try_all = cimg_option("-slow", false, "Calculate full line error for every possible graphics character (64x slower)");
 	const int dither = cimg_option("-dither", 0, "Enable ordered dithering (2=2x2 3=3x3 4=4x4 5=2x3 matrix)");
+	const bool load = cimg_option("-load", false, "Load MODE 7 bin file not the image!");
 
 	char filename[256];
 	FILE *file;
@@ -742,459 +743,473 @@ int main(int argc, char **argv)
 		printf("Loading image file '%s'...\n", input_name);
 	}
 
-	src.assign(input_name);
-
-	//
-	// Resize!
-	//
-
-	int pixel_width, pixel_height;
-
-	if (no_scale)
+	if (load)
 	{
-		if (verbose)
+		file = fopen(input_name, "rb");
+
+		if (file)
 		{
-			printf("Leaving size as %d x %d pixels...\n", src._width, src._height);
+			fread(mode7, 1, MODE7_MAX_SIZE, file);
+			fclose(file);
 		}
 
-		pixel_width = src._width;
-		pixel_height = src._height;
 	}
 	else
 	{
-		// Calculate frame size - adjust to width
-		pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
-		pixel_height = pixel_width * IMAGE_H / IMAGE_W;
-		if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
-
-		// Adjust to height
-		if (pixel_height > MODE7_PIXEL_H)
-		{
-			pixel_height = MODE7_PIXEL_H;
-			pixel_width = pixel_height * IMAGE_W / IMAGE_H;
-
-			if (pixel_width % 1) pixel_width++;
-
-			// Need to handle reset of background if frame_width < MODE7_WIDTH
-		}
-
-		// Resize image to this size
-
-		if (verbose)
-		{
-			printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
-		}
-
-		src.resize(pixel_width, pixel_height);
-
-		// Save test images for debug
-
-		if (simg)
-		{
-			if (verbose)
-			{
-				printf("Saving test image '%s_small.png'...\n", input_name);
-			}
-
-			sprintf(filename, "%s_small.png", input_name);
-			src.save(filename);
-		}
-	}
-
-	//
-	// Dithering!
-	//
-
-	if (dither > 1 && dither <= 5)
-	{
-		int modx = dither, mody = dither;
-
-		if (dither == 5)
-		{
-			modx = 2;
-			mody = 3;
-		}
-
-		int divisor = 2 * ((modx * mody) + 1);
-		int subtract = divisor / 2;
-		int *table = NULL;
-
-		if (verbose)
-		{
-			printf("Ordered dither %dx%d (divisor=%d subtract=%d)...\n", modx, mody, divisor, subtract);
-		}
-
-		switch (dither)
-		{
-		case 2:
-			table = dither2;
-			break;
-
-		case 3:
-			table = dither3;
-			break;
-
-		case 4:
-			table = dither4;
-			break;
-
-		case 5:
-			table = dither23;
-			break;
-
-		default:
-			break;
-		}
-
-		cimg_forXY(src, x, y)
-		{
-			int image_r = src(x, y, 0);
-			int image_g = src(x, y, 1);
-			int image_b = src(x, y, 2);
-
-			image_r = src(x, y, 0) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
-			image_r = MIN(image_r, 255);
-			image_r = MAX(image_r, 0);
-
-			image_g = src(x, y, 1) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
-			image_g = MIN(image_g, 255);
-			image_g = MAX(image_g, 0);
-
-			image_b = src(x, y, 2) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
-			image_b = MIN(image_b, 255);
-			image_b = MAX(image_b, 0);
-
-			src(x, y, 0) = image_r;
-			src(x, y, 1) = image_g;
-			src(x, y, 2) = image_b;
-		}
-
-		// Save test images for debug
-
-		if (simg)
-		{
-			if (verbose)
-			{
-				printf("Saving test image '%s_dither.png'...\n", input_name);
-			}
-
-			sprintf(filename, "%s_dither.png", input_name);
-			src.save(filename);
-		}
-	}
-
-	//
-	// Colour conversion etc.
-	//
-
-	if (!use_quant)
-	{
-		if (verbose)
-		{
-			printf("Skipping conversion to MODE 7 palette...\n");
-		}
-	}
-	else
-	{
-		if (verbose)
-		{
-			printf("Converting to MODE 7 palette...\n");
-		}
-
-		// Convert to HSV
-
-		cimg_forXY(src, x, y)
-		{
-			unsigned char R = src(x, y, 0);
-			unsigned char G = src(x, y, 1);
-			unsigned char B = src(x, y, 2);
-
-			unsigned char r, g, b;
-			r = g = b = 0;
-
-			unsigned char M = MAX_3(R, G, B);
-			unsigned char m = MIN_3(R, G, B);
-
-			unsigned char C = M - m;				// Chroma - black to white
-
-			unsigned char Hc = 0;					// Hue - as BBC colour palette
-
-			if (C != 0)
-			{
-				if (M == R)
-				{
-					int h = 255 * (G - B) / C;
-
-					if (h > 127) Hc = 3;			// yellow
-					else if (h < -128) Hc = 5;		// magenta
-					else Hc = 1;					// red
-				}
-				else if (M == G)
-				{
-					int h = 255 * (B - R) / C;
-
-					if (h > 127) Hc = 6;			// cyan
-					else if (h < -128) Hc = 3;		// yellow
-					else Hc = 2;					// green
-				}
-				else if (M == B)
-				{
-					int h = 255 * (R - G) / C;
-
-					if (h > 127) Hc = 5;			// magenta
-					else if (h < -128) Hc = 6;		// cyan
-					else Hc = 2;					// blue
-				}
-			}
-
-			unsigned char Y = (unsigned char)(0.2126f * R + 0.7152f * G + 0.0722f * B);		// Luma (screen brightess)
-
-			unsigned char V = M;					// Value
-
-			int S = 0;								// Saturation
-
-			if (C != 0)
-			{
-				S = 255 * C / V;
-			}
-
-			// If saturation too low assume grey
-
-			if (S < sat)
-			{
-				// Grey
-				// Adjust colour palette for grey scale
-				// Map value to colour ramp - change RAMP!
-
-				unsigned char Gc = 0;
-				int midpoint = (white - black) / 2;
-
-				if (V < black)
-					Gc = 0;
-				else if (V < (black + midpoint))
-					Gc = 4;			// blue
-				else if (V < white)
-					Gc = 6;			// cyan
-				else
-					Gc = 7;			// white		// could use yellow?
-
-				r = GET_RED_FROM_COLOUR(Gc);
-				g = GET_GREEN_FROM_COLOUR(Gc);
-				b = GET_BLUE_FROM_COLOUR(Gc);
-			}
-			else
-			{
-				// Colour
-				// If Value is too low then assume black
-
-				if (V < value)
-				{
-					// Black
-					r = g = b = 0;
-				}
-				else
-				{
-					// Not black = full colour
-
-					int c = match_closest_palette_colour(R, G, B);
-
-					r = GET_RED_FROM_COLOUR(c);
-					g = GET_GREEN_FROM_COLOUR(c);
-					b = GET_BLUE_FROM_COLOUR(c);
-				}
-			}
-
-			src(x, y, 0) = r;
-			src(x, y, 1) = g;
-			src(x, y, 2) = b;
-		}
+		src.assign(input_name);
 
 		//
-		// Save output of colour conversion for debug
+		// Resize!
 		//
 
-		if (simg)
+		int pixel_width, pixel_height;
+
+		if (no_scale)
 		{
 			if (verbose)
 			{
-				printf("Saving test image '%s_quant.png'...\n", input_name);
+				printf("Leaving size as %d x %d pixels...\n", src._width, src._height);
 			}
 
-			sprintf(filename, "%s_quant.png", input_name);
-			src.save(filename);
-		}
-	}
-
-	//
-	// Conversion to MODE 7
-	//
-
-	int frame_error = 0;
-
-	frame_width = pixel_width / 2;
-	frame_height = pixel_height / 3;
-
-	if (verbose)
-	{
-		printf("Converting to MODE 7 screen size %d x %d...\n", frame_width, frame_height);
-	}
-
-	// Set everything to blank
-	memset(mode7, MODE7_BLANK, MODE7_MAX_SIZE);
-
-	for(int y7 = 0; y7 < frame_height; y7++)
-	{
-		int y = IMAGE_Y_FROM_Y7(y7);
-
-		// Reset state as starting new character row
-		// State = fg colour + bg colour + hold character + prev character
-		// For each character cell on this line
-		// Do we have pixels or not?
-		// If we have pixels then need to decide whether is it better to replace this cell with a control code or keep pixels
-		// Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
-		// "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
-
-		// Clear our array of error values for each state & x position
-		clear_error_char_arrays();
-
-		int min_error = INT_MAX;
-		int min_colour = 0;
-
-		// Determine best initial state for line
-		for (int fg = 7; fg > 0; fg--)
-		{
-			// What would our first character look like in this state?
-			unsigned char first_char = get_graphic_char_from_image(FRAME_FIRST_COLUMN, y7, fg, 0, false);
-
-			// What's the error for that character?
-			int error = get_error_for_char(FRAME_FIRST_COLUMN, y7, first_char, fg, 0, false, MODE7_BLANK, false);
-
-			// Find the lowest error corresponding to our possible start states
-			if (error < min_error)
-			{
-				min_error = error;
-				min_colour = fg;
-			}
-		}
-
-		// This is our initial state of the line
-		int state = GET_STATE(min_colour, 0, false, MODE7_BLANK, false);
-
-		if (verbose)
-		{
-			printf("[%d] Start colour=%d ", y7, min_colour);
+			pixel_width = src._width;
+			pixel_height = src._height;
 		}
 		else
 		{
-			printf("\rProcessing line %d/%d...", y7, frame_height);
+			// Calculate frame size - adjust to width
+			pixel_width = (MODE7_WIDTH - FRAME_FIRST_COLUMN) * 2;
+			pixel_height = pixel_width * IMAGE_H / IMAGE_W;
+			if (pixel_height % 3) pixel_height += (3 - (pixel_height % 3));
+
+			// Adjust to height
+			if (pixel_height > MODE7_PIXEL_H)
+			{
+				pixel_height = MODE7_PIXEL_H;
+				pixel_width = pixel_height * IMAGE_W / IMAGE_H;
+
+				if (pixel_width % 1) pixel_width++;
+
+				// Need to handle reset of background if frame_width < MODE7_WIDTH
+			}
+
+			// Resize image to this size
+
+			if (verbose)
+			{
+				printf("Resizing from %d x %d to %d x %d pixels...\n", src._width, src._height, pixel_width, pixel_height);
+			}
+
+			src.resize(pixel_width, pixel_height);
+
+			// Save test images for debug
+
+			if (simg)
+			{
+				if (verbose)
+				{
+					printf("Saving test image '%s_small.png'...\n", input_name);
+				}
+
+				sprintf(filename, "%s_small.png", input_name);
+				src.save(filename);
+			}
 		}
 
-		// Set this state before frame begins
-		mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 1)] = MODE7_GFX_COLOUR + min_colour;
+		//
+		// Dithering!
+		//
 
-		// Kick off recursive error calculation with that state
-		int error = get_error_for_remainder_of_line(FRAME_FIRST_COLUMN, y7, min_colour, 0, false, MODE7_BLANK, false);
+		if (dither > 1 && dither <= 5)
+		{
+			int modx = dither, mody = dither;
+
+			if (dither == 5)
+			{
+				modx = 2;
+				mody = 3;
+			}
+
+			int divisor = 2 * ((modx * mody) + 1);
+			int subtract = divisor / 2;
+			int *table = NULL;
+
+			if (verbose)
+			{
+				printf("Ordered dither %dx%d (divisor=%d subtract=%d)...\n", modx, mody, divisor, subtract);
+			}
+
+			switch (dither)
+			{
+			case 2:
+				table = dither2;
+				break;
+
+			case 3:
+				table = dither3;
+				break;
+
+			case 4:
+				table = dither4;
+				break;
+
+			case 5:
+				table = dither23;
+				break;
+
+			default:
+				break;
+			}
+
+			cimg_forXY(src, x, y)
+			{
+				int image_r = src(x, y, 0);
+				int image_g = src(x, y, 1);
+				int image_b = src(x, y, 2);
+
+				image_r = src(x, y, 0) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+				image_r = MIN(image_r, 255);
+				image_r = MAX(image_r, 0);
+
+				image_g = src(x, y, 1) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+				image_g = MIN(image_g, 255);
+				image_g = MAX(image_g, 0);
+
+				image_b = src(x, y, 2) + 254 * (table[(x % modx) + (y % mody) * modx] - subtract) / divisor;
+				image_b = MIN(image_b, 255);
+				image_b = MAX(image_b, 0);
+
+				src(x, y, 0) = image_r;
+				src(x, y, 1) = image_g;
+				src(x, y, 2) = image_b;
+			}
+
+			// Save test images for debug
+
+			if (simg)
+			{
+				if (verbose)
+				{
+					printf("Saving test image '%s_dither.png'...\n", input_name);
+				}
+
+				sprintf(filename, "%s_dither.png", input_name);
+				src.save(filename);
+			}
+		}
+
+		//
+		// Colour conversion etc.
+		//
+
+		if (!use_quant)
+		{
+			if (verbose)
+			{
+				printf("Skipping conversion to MODE 7 palette...\n");
+			}
+		}
+		else
+		{
+			if (verbose)
+			{
+				printf("Converting to MODE 7 palette...\n");
+			}
+
+			// Convert to HSV
+
+			cimg_forXY(src, x, y)
+			{
+				unsigned char R = src(x, y, 0);
+				unsigned char G = src(x, y, 1);
+				unsigned char B = src(x, y, 2);
+
+				unsigned char r, g, b;
+				r = g = b = 0;
+
+				unsigned char M = MAX_3(R, G, B);
+				unsigned char m = MIN_3(R, G, B);
+
+				unsigned char C = M - m;				// Chroma - black to white
+
+				unsigned char Hc = 0;					// Hue - as BBC colour palette
+
+				if (C != 0)
+				{
+					if (M == R)
+					{
+						int h = 255 * (G - B) / C;
+
+						if (h > 127) Hc = 3;			// yellow
+						else if (h < -128) Hc = 5;		// magenta
+						else Hc = 1;					// red
+					}
+					else if (M == G)
+					{
+						int h = 255 * (B - R) / C;
+
+						if (h > 127) Hc = 6;			// cyan
+						else if (h < -128) Hc = 3;		// yellow
+						else Hc = 2;					// green
+					}
+					else if (M == B)
+					{
+						int h = 255 * (R - G) / C;
+
+						if (h > 127) Hc = 5;			// magenta
+						else if (h < -128) Hc = 6;		// cyan
+						else Hc = 2;					// blue
+					}
+				}
+
+				unsigned char Y = (unsigned char)(0.2126f * R + 0.7152f * G + 0.0722f * B);		// Luma (screen brightess)
+
+				unsigned char V = M;					// Value
+
+				int S = 0;								// Saturation
+
+				if (C != 0)
+				{
+					S = 255 * C / V;
+				}
+
+				// If saturation too low assume grey
+
+				if (S < sat)
+				{
+					// Grey
+					// Adjust colour palette for grey scale
+					// Map value to colour ramp - change RAMP!
+
+					unsigned char Gc = 0;
+					int midpoint = (white - black) / 2;
+
+					if (V < black)
+						Gc = 0;
+					else if (V < (black + midpoint))
+						Gc = 4;			// blue
+					else if (V < white)
+						Gc = 6;			// cyan
+					else
+						Gc = 7;			// white		// could use yellow?
+
+					r = GET_RED_FROM_COLOUR(Gc);
+					g = GET_GREEN_FROM_COLOUR(Gc);
+					b = GET_BLUE_FROM_COLOUR(Gc);
+				}
+				else
+				{
+					// Colour
+					// If Value is too low then assume black
+
+					if (V < value)
+					{
+						// Black
+						r = g = b = 0;
+					}
+					else
+					{
+						// Not black = full colour
+
+						int c = match_closest_palette_colour(R, G, B);
+
+						r = GET_RED_FROM_COLOUR(c);
+						g = GET_GREEN_FROM_COLOUR(c);
+						b = GET_BLUE_FROM_COLOUR(c);
+					}
+				}
+
+				src(x, y, 0) = r;
+				src(x, y, 1) = g;
+				src(x, y, 2) = b;
+			}
+
+			//
+			// Save output of colour conversion for debug
+			//
+
+			if (simg)
+			{
+				if (verbose)
+				{
+					printf("Saving test image '%s_quant.png'...\n", input_name);
+				}
+
+				sprintf(filename, "%s_quant.png", input_name);
+				src.save(filename);
+			}
+		}
+
+		//
+		// Conversion to MODE 7
+		//
+
+		int frame_error = 0;
+
+		frame_width = pixel_width / 2;
+		frame_height = pixel_height / 3;
 
 		if (verbose)
 		{
-			printf("Line error=%d\n", error);
+			printf("Converting to MODE 7 screen size %d x %d...\n", frame_width, frame_height);
 		}
 
-		frame_error += error;
+		// Set everything to blank
+		memset(mode7, MODE7_BLANK, MODE7_MAX_SIZE);
 
-		// Store first character
-		char_for_xpos_in_state[state][FRAME_FIRST_COLUMN] = output[FRAME_FIRST_COLUMN];
-
-		// Copy the resulting character data into MODE 7 screen
-		for (int x7 = FRAME_FIRST_COLUMN; x7 < (FRAME_FIRST_COLUMN + FRAME_WIDTH); x7++)
+		for (int y7 = 0; y7 < frame_height; y7++)
 		{
-			// Copy character chosen in this position for this state
-			unsigned char best_char = char_for_xpos_in_state[state][x7];
+			int y = IMAGE_Y_FROM_Y7(y7);
 
-			mode7[(y7 * MODE7_WIDTH) + (x7)] = best_char;
+			// Reset state as starting new character row
+			// State = fg colour + bg colour + hold character + prev character
+			// For each character cell on this line
+			// Do we have pixels or not?
+			// If we have pixels then need to decide whether is it better to replace this cell with a control code or keep pixels
+			// Possible control codes are: new fg colour, fill (bg colour = fg colour), no fill (bg colour = black), hold graphics (hold char = prev char), release graphics (hold char = empty)
+			// "Better" means that the "error" for the rest of the line (appearance on screen vs actual image = deviation) is minimised
 
-			// Update the state
-			state = get_state_for_char(best_char, state);
+			// Clear our array of error values for each state & x position
+			clear_error_char_arrays();
+
+			int min_error = INT_MAX;
+			int min_colour = 0;
+
+			// Determine best initial state for line
+			for (int fg = 7; fg > 0; fg--)
+			{
+				// What would our first character look like in this state?
+				unsigned char first_char = get_graphic_char_from_image(FRAME_FIRST_COLUMN, y7, fg, 0, false);
+
+				// What's the error for that character?
+				int error = get_error_for_char(FRAME_FIRST_COLUMN, y7, first_char, fg, 0, false, MODE7_BLANK, false);
+
+				// Find the lowest error corresponding to our possible start states
+				if (error < min_error)
+				{
+					min_error = error;
+					min_colour = fg;
+				}
+			}
+
+			// This is our initial state of the line
+			int state = GET_STATE(min_colour, 0, false, MODE7_BLANK, false);
+
+			if (verbose)
+			{
+				printf("[%d] Start colour=%d ", y7, min_colour);
+			}
+			else
+			{
+				printf("\rProcessing line %d/%d...", y7, frame_height);
+			}
+
+			// Set this state before frame begins
+			mode7[(y7 * MODE7_WIDTH) + (FRAME_FIRST_COLUMN - 1)] = MODE7_GFX_COLOUR + min_colour;
+
+			// Kick off recursive error calculation with that state
+			int error = get_error_for_remainder_of_line(FRAME_FIRST_COLUMN, y7, min_colour, 0, false, MODE7_BLANK, false);
+
+			if (verbose)
+			{
+				printf("Line error=%d\n", error);
+			}
+
+			frame_error += error;
+
+			// Store first character
+			char_for_xpos_in_state[state][FRAME_FIRST_COLUMN] = output[FRAME_FIRST_COLUMN];
+
+			// Copy the resulting character data into MODE 7 screen
+			for (int x7 = FRAME_FIRST_COLUMN; x7 < (FRAME_FIRST_COLUMN + FRAME_WIDTH); x7++)
+			{
+				// Copy character chosen in this position for this state
+				unsigned char best_char = char_for_xpos_in_state[state][x7];
+
+				mode7[(y7 * MODE7_WIDTH) + (x7)] = best_char;
+
+				// Update the state
+				state = get_state_for_char(best_char, state);
+			}
+
+			// For when image is narrower than screen width
+
+			if (FRAME_FIRST_COLUMN + FRAME_WIDTH < MODE7_WIDTH)
+			{
+				mode7[(y7 * MODE7_WIDTH) + FRAME_FIRST_COLUMN + FRAME_WIDTH] = MODE7_BLACK_BG;
+			}
+
+			// printf("\n");
+
+			y += 2;
 		}
 
-		// For when image is narrower than screen width
-
-		if (FRAME_FIRST_COLUMN + FRAME_WIDTH < MODE7_WIDTH)
-		{
-			mode7[(y7 * MODE7_WIDTH) + FRAME_FIRST_COLUMN + FRAME_WIDTH] = MODE7_BLACK_BG;
-		}
-
-		// printf("\n");
-
-		y += 2;
-	}
-
-	if (verbose)
-	{
-		printf("Total frame error = %d\n", frame_error);
-		printf("MODE 7 frame size = %d bytes\n", FRAME_SIZE);
-	}
-	else
-	{
-		printf("\n");
-	}
-
-	if (output_name)
-	{
 		if (verbose)
 		{
-			printf("Writing MODE 7 frame '%s'...\n", output_name);
+			printf("Total frame error = %d\n", frame_error);
+			printf("MODE 7 frame size = %d bytes\n", FRAME_SIZE);
 		}
-
-		file = fopen(output_name, "wb");
-	}
-	else
-	{
-		if (verbose)
+		else
 		{
-			printf("Writing MODE 7 frame '%s.bin'...\n", input_name);
+			printf("\n");
 		}
 
-		sprintf(filename, "%s.bin", input_name);
-		file = fopen(filename, "wb");
-	}
-
-	if (file)
-	{
-		fwrite(mode7, 1, FRAME_SIZE, file);
-		fclose(file);
-	}
-
-	if (inf)
-	{
 		if (output_name)
 		{
 			if (verbose)
 			{
-				printf("Writing inf file '%s.inf'...\n", output_name);
+				printf("Writing MODE 7 frame '%s'...\n", output_name);
 			}
 
-			sprintf(filename, "%s.inf", output_name);
+			file = fopen(output_name, "wb");
 		}
 		else
 		{
 			if (verbose)
 			{
-				printf("Writing inf file '%s.bin.inf'...\n", input_name);
+				printf("Writing MODE 7 frame '%s.bin'...\n", input_name);
 			}
 
-			sprintf(filename, "%s.bin.inf", input_name);
+			sprintf(filename, "%s.bin", input_name);
+			file = fopen(filename, "wb");
 		}
-
-		file = fopen((const char*)filename, "wb");
 
 		if (file)
 		{
-			char buffer[256];
-			sprintf(buffer, "$.IMAGE      FF7C00 FF7C00\n");
-
-			fwrite(buffer, 1, strlen(buffer), file);
+			fwrite(mode7, 1, FRAME_SIZE, file);
 			fclose(file);
+		}
+
+		if (inf)
+		{
+			if (output_name)
+			{
+				if (verbose)
+				{
+					printf("Writing inf file '%s.inf'...\n", output_name);
+				}
+
+				sprintf(filename, "%s.inf", output_name);
+			}
+			else
+			{
+				if (verbose)
+				{
+					printf("Writing inf file '%s.bin.inf'...\n", input_name);
+				}
+
+				sprintf(filename, "%s.bin.inf", input_name);
+			}
+
+			file = fopen((const char*)filename, "wb");
+
+			if (file)
+			{
+				char buffer[256];
+				sprintf(buffer, "$.IMAGE      FF7C00 FF7C00\n");
+
+				fwrite(buffer, 1, strlen(buffer), file);
+				fclose(file);
+			}
 		}
 	}
 

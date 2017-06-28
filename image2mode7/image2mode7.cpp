@@ -60,7 +60,7 @@ using namespace cimg_library;
 #define _COLOUR_DEBUG		FALSE
 
 static CImg<unsigned char> src;
-static unsigned char mode7[MODE7_MAX_SIZE];
+static unsigned char mode7[MODE7_MAX_SIZE * 8];
 
 static int total_error_in_state[MAX_STATE][MODE7_WIDTH + 1];
 static unsigned char char_for_xpos_in_state[MAX_STATE][MODE7_WIDTH + 1];
@@ -754,12 +754,14 @@ int main(int argc, char **argv)
 		{
 			printf("Decoding edit.tf URL...\n");
 		}
+
+		int size = strlen(decode_string);
 		
-		frame_width = MODE7_WIDTH;
-		frame_height = MODE7_HEIGHT;
+		frame_width = MODE7_WIDTH;			// have to assume this
+		frame_height = size / frame_width;
 
 		/* set up a destination buffer large enough to hold the decoded data */
-		unsigned char* mode77 = (unsigned char*)malloc(4 + (MODE7_MAX_SIZE * 7) / 8);
+		unsigned char* mode77 = (unsigned char*)malloc(4 + (FRAME_SIZE * 7) / 8);
 		/* keep track of our decoded position */
 		char* c = (char *)mode77;
 		/* store the number of bytes decoded by a single call */
@@ -771,7 +773,7 @@ int main(int argc, char **argv)
 		/* initialise the decoder state */
 		base64_init_decodestate(&s);
 		/* decode the input data */
-		cnt = base64_decode_block(decode_string, strlen(decode_string), c, &s);
+		cnt = base64_decode_block(decode_string, size, c, &s);
 		c += cnt;
 		/* note: there is no base64_decode_blockend! */
 		/*---------- STOP DECODING  ----------*/
@@ -783,7 +785,7 @@ int main(int argc, char **argv)
 		unsigned char *bits7 = mode77;
 		unsigned char *bits8 = mode7;
 
-		for (int i = 0; i < (MODE7_MAX_SIZE * 7) / 8; i += 7)
+		for (int i = 0; i < (FRAME_SIZE * 7) / 8; i += 7)
 		{
 			// 7 enter, 8 leave
 			unsigned char a, b;
@@ -830,11 +832,15 @@ int main(int argc, char **argv)
 
 		if (file)
 		{
-			fread(mode7, 1, MODE7_MAX_SIZE, file);
-			fclose(file);
+			fseek(file, 0, SEEK_END);
+			int size = ftell(file);
+			fseek(file, 0, SEEK_SET);
 
-			frame_width = MODE7_WIDTH;
-			frame_height = MODE7_HEIGHT;
+			frame_width = MODE7_WIDTH;				// have to assume this
+			frame_height = size / frame_width;
+
+			fread(mode7, 1, FRAME_SIZE, file);
+			fclose(file);
 		}
 	}
 	//

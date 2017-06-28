@@ -155,6 +155,7 @@
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="cdecode.c" />
     <ClCompile Include="cencode.c" />
     <ClCompile Include="image2mode7.cpp" />
   </ItemGroup>

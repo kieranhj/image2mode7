@@ -14,6 +14,7 @@
 extern "C"
 {
 #include "b64/cencode.h"
+#include "b64/cdecode.h"
 }
 
 using namespace cimg_library;
@@ -723,6 +724,7 @@ int main(int argc, char **argv)
 	const bool try_all = cimg_option("-slow", false, "Calculate full line error for every possible graphics character (64x slower)");
 	const int dither = cimg_option("-dither", 0, "Enable ordered dithering (2=2x2 3=3x3 4=4x4 5=2x3 matrix)");
 	const bool load = cimg_option("-load", false, "Load MODE 7 bin file not the image!");
+	const char *const decode_string = cimg_option("-decode", (char*)0, "Decode edit.tf URL not the image!");
 
 	char filename[256];
 	FILE *file;
@@ -743,7 +745,86 @@ int main(int argc, char **argv)
 		printf("Loading image file '%s'...\n", input_name);
 	}
 
-	if (load)
+	//
+	// Decode!
+	//
+	if (decode_string)
+	{
+		if (verbose)
+		{
+			printf("Decoding edit.tf URL...\n");
+		}
+		
+		frame_width = MODE7_WIDTH;
+		frame_height = MODE7_HEIGHT;
+
+		/* set up a destination buffer large enough to hold the decoded data */
+		unsigned char* mode77 = (unsigned char*)malloc(4 + (MODE7_MAX_SIZE * 7) / 8);
+		/* keep track of our decoded position */
+		char* c = (char *)mode77;
+		/* store the number of bytes decoded by a single call */
+		int cnt = 0;
+		/* we need a decoder state */
+		base64_decodestate s;
+
+		/*---------- START DECODING ----------*/
+		/* initialise the decoder state */
+		base64_init_decodestate(&s);
+		/* decode the input data */
+		cnt = base64_decode_block(decode_string, strlen(decode_string), c, &s);
+		c += cnt;
+		/* note: there is no base64_decode_blockend! */
+		/*---------- STOP DECODING  ----------*/
+
+		/* we want to print the decoded data, so null-terminate it: */
+		//*c = 0;
+
+		/* set up a destination buffer large enough to hold the encoded data */
+		unsigned char *bits7 = mode77;
+		unsigned char *bits8 = mode7;
+
+		for (int i = 0; i < (MODE7_MAX_SIZE * 7) / 8; i += 7)
+		{
+			// 7 enter, 8 leave
+			unsigned char a, b;
+
+			a = *bits7++;					// 1
+			*bits8++ = (a >> 1);
+
+			b = *bits7++;				// 2
+			*bits8++ = ((a & 0x1) << 6) | (b >> 2);
+
+			a = b;
+			b = *bits7++;				// 3
+			*bits8++ = ((a & 0x3) << 5) | (b >> 3);
+
+			a = b;
+			b = *bits7++;				// 4
+			*bits8++ = ((a & 0x7) << 4) | (b >> 4);
+
+			a = b;
+			b = *bits7++;				// 5
+			*bits8++ = ((a & 0xf) << 3) | (b >> 5);
+
+			a = b;
+			b = *bits7++;				// 6
+			*bits8++ = ((a & 0x1f) << 2) | (b >> 6);
+
+			a = b;
+			b = *bits7++;				// 7
+			*bits8++ = ((a & 0x3f) << 1) | (b >> 7);
+
+			a = b;							// 8
+			*bits8++ = (a & 0x7f);
+		}
+
+		free(mode77);
+		mode77 = NULL;
+	}
+	//
+	// Load!
+	//
+	else if (load)
 	{
 		file = fopen(input_name, "rb");
 
@@ -751,9 +832,14 @@ int main(int argc, char **argv)
 		{
 			fread(mode7, 1, MODE7_MAX_SIZE, file);
 			fclose(file);
-		}
 
+			frame_width = MODE7_WIDTH;
+			frame_height = MODE7_HEIGHT;
+		}
 	}
+	//
+	// Convert!
+	//
 	else
 	{
 		src.assign(input_name);
@@ -1152,7 +1238,13 @@ int main(int argc, char **argv)
 		{
 			printf("\n");
 		}
+	}
 
+	//
+	// Output
+	//
+	if (!load)
+	{
 		if (output_name)
 		{
 			if (verbose)
@@ -1178,38 +1270,38 @@ int main(int argc, char **argv)
 			fwrite(mode7, 1, FRAME_SIZE, file);
 			fclose(file);
 		}
+	}
 
-		if (inf)
+	if (inf)
+	{
+		if (output_name)
 		{
-			if (output_name)
+			if (verbose)
 			{
-				if (verbose)
-				{
-					printf("Writing inf file '%s.inf'...\n", output_name);
-				}
-
-				sprintf(filename, "%s.inf", output_name);
-			}
-			else
-			{
-				if (verbose)
-				{
-					printf("Writing inf file '%s.bin.inf'...\n", input_name);
-				}
-
-				sprintf(filename, "%s.bin.inf", input_name);
+				printf("Writing inf file '%s.inf'...\n", output_name);
 			}
 
-			file = fopen((const char*)filename, "wb");
-
-			if (file)
+			sprintf(filename, "%s.inf", output_name);
+		}
+		else
+		{
+			if (verbose)
 			{
-				char buffer[256];
-				sprintf(buffer, "$.IMAGE      FF7C00 FF7C00\n");
-
-				fwrite(buffer, 1, strlen(buffer), file);
-				fclose(file);
+				printf("Writing inf file '%s.bin.inf'...\n", input_name);
 			}
+
+			sprintf(filename, "%s.bin.inf", input_name);
+		}
+
+		file = fopen((const char*)filename, "wb");
+
+		if (file)
+		{
+			char buffer[256];
+			sprintf(buffer, "$.IMAGE      FF7C00 FF7C00\n");
+
+			fwrite(buffer, 1, strlen(buffer), file);
+			fclose(file);
 		}
 	}
 
@@ -1221,7 +1313,7 @@ int main(int argc, char **argv)
 
 		if (verbose)
 		{
-			printf("Calculating edit.tf URL...\n", input_name);
+			printf("Calculating edit.tf URL...\n");
 		}
 
 		for (int i = 0; i < MODE7_MAX_SIZE; i+=8)

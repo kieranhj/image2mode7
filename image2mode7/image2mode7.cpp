@@ -730,7 +730,6 @@ int main(int argc, char **argv)
 	FILE *file;
 
 	if (cimg_option("-h", false, 0)) std::exit(0);
-	if (input_name == NULL)  std::exit(0);
 
 	global_use_hold = !no_hold;
 	global_use_fill = !no_fill;
@@ -740,25 +739,29 @@ int main(int argc, char **argv)
 	global_use_geometric = !error_lookup;
 	global_try_all = try_all;
 
-	if (verbose)
-	{
-		printf("Loading image file '%s'...\n", input_name);
-	}
-
 	//
 	// Decode!
 	//
 	if (decode_string)
 	{
+		char edittf_string[2048];
+		const char* base64_string;
+
 		if (verbose)
 		{
 			printf("Decoding edit.tf URL...\n");
 		}
 
-		int size = strlen(decode_string);
+		if (sscanf(decode_string, "http://edit.tf/#0:%s", edittf_string) == 1) {
+			base64_string = edittf_string;
+		} else {
+			base64_string = decode_string;
+		}
+		
+		int size = strlen(base64_string);
 		
 		frame_width = MODE7_WIDTH;			// have to assume this
-		frame_height = size / frame_width;
+		frame_height = (size * 7) / (8 * frame_width);
 
 		/* set up a destination buffer large enough to hold the decoded data */
 		unsigned char* mode77 = (unsigned char*)malloc(4 + (FRAME_SIZE * 7) / 8);
@@ -773,7 +776,7 @@ int main(int argc, char **argv)
 		/* initialise the decoder state */
 		base64_init_decodestate(&s);
 		/* decode the input data */
-		cnt = base64_decode_block(decode_string, size, c, &s);
+		cnt = base64_decode_block(base64_string, size, c, &s);
 		c += cnt;
 		/* note: there is no base64_decode_blockend! */
 		/*---------- STOP DECODING  ----------*/
@@ -828,6 +831,10 @@ int main(int argc, char **argv)
 	//
 	else if (load)
 	{
+		if (verbose) {
+			printf("Loading MODE 7 binary file '%s'...\n", input_name);
+		}
+
 		file = fopen(input_name, "rb");
 
 		if (file)
@@ -848,6 +855,10 @@ int main(int argc, char **argv)
 	//
 	else
 	{
+		if (verbose) {
+			printf("Loading image file '%s'...\n", input_name);
+		}
+
 		src.assign(input_name);
 
 		//
@@ -1304,7 +1315,19 @@ int main(int argc, char **argv)
 		if (file)
 		{
 			char buffer[256];
-			sprintf(buffer, "$.IMAGE      FF7C00 FF7C00\n");
+			char beeb_name[8];
+			if (output_name) {
+				strncpy(beeb_name, output_name, 7);
+			}
+			else {
+				strncpy(beeb_name, input_name, 7);
+			}
+			beeb_name[7] = '\0';
+			char* dot = strchr(beeb_name, '.');
+			if (dot != NULL) {
+				*dot = '\0';
+			}
+			sprintf(buffer, "$.%s      FF7C00 FF7C00\n", beeb_name);
 
 			fwrite(buffer, 1, strlen(buffer), file);
 			fclose(file);

@@ -1,0 +1,125 @@
+Image2 Mode7
+
+Options
+- take any image size - DONE
+- keep aspect ratio and fit to W or H - DONE
+- fit to given W x H
+- start at column X, row Y
+
+Process
+- Quantise colours to 3-bit palette - DONE
+- Scale down from larger size to MODE 7 screen size - DONE
+- Match best possible character sequence to minimise error from image - DONE
+
+Questions
+- Which order is it best to do these in?
+- What are we calculating the error from?  The quantised image or original?
+- Should the colour pre-processing be separated from the MODE7 conversion or are they
+  intertwined?
+
+Current algo
+- Quantise using RGB threshold
+- Scale down using nearest neighbour
+- Minimise error from quantised image
+
+Issues
+- Threshold quantisation means that any shade of grey just gets blatted to white
+- Would be better to use certain colours as brightness, e.g. black/blue/cyan/white
+- Then other colours to more accurately represent image
+
+Additional options
+- Turn into HSV?
+  - Hue gives us MODE 7 palette directly
+  - Then use saturation / value to determine whether to map to something else for brightness
+- Search pixel / graphic character space more - currently determining pixels as non-bg
+- Could try all pixel combinations and minimise error (from what?)
+
+Ask Francis for the code to his TTX viewer - NOT AVAILABLE
+- Turn this into a Windows conversion tool 
+- Prefer not to write an app (although could do this in C# I suppose)
+
+Code Improvements
+- What's the interface for conversion that can be shared with video convertor?
+- Just pass state around as int?
+
+
+TO DO:
+- Tidy up and put in own repo - DONE
+- Statically link as much as possible so don't need VS distro - DONE?
+- Check it works on older machines, esp. 32-bit Win7 - DONE?
+- Add more debug in verbose output (inc. error info) - IN PROGRESS
+- Add ability to trace a row and/or column in more detail (run-time param)
+
+- Finish investigation into trying all 64 pixel combos to get lowest error for each character cell - DONE
+- Try uber search of all 64 pixel combos to get lowest overall error per line - DONE
+
+- Tricky's idea of reducing to 77x73 and trying all 6 offsets to get lowest overall error - TOO MUCH WORK, TOO LITTLE VALUE
+
+- Try quick palette distance check = colour a ^ colour b? - DONE BUT NEED TO COUNT BITS SET NOT VALUE
+
+- Look up better algorithm for colour distance calcs for pure RGB (is red closer to green or blue?) - DONE
+- Extreme RGB colour values fool error calculation easily in 2x3 pixel grid - having one pixel in wrong place often
+  same or lower error than having more pixels of wrong colour elsewhere.  Need to bias towards fg pixels in the
+  correct place.
+  -> proposal.  If comparing black or white then error = position when colours put in brightness order (0-7)
+  -> If comparing colours then error = hue distance * 2 red->yellow=2, red->green=4, red->cyan=6 (0-6)
+  -> do this as [8][8] table for easy adjustment? - DONE
+
+- Dithering - NOT POSSIBLE? - Don't know what character going to choose until later so can't propagate error...
+= Joachim has come up with a patch for this - need to investigate
+- In theory possible to propagate the error horizontally during a line but really would need to store propagated
+  error in the state.  If propagate 2-bits (1x sign-bit and 1x error bit) per channel per pixel across the 
+  character boundary this would be 2x 3x 3 = 18 bits which is not possible
+- Potentially just propagate the total error for the 3 edge pixels across the character boundary 2x 3 = 6 bits?
+- Could also propagate error to the next character row by altering the actual image once the line has been chosen
+  and written back to the MODE 7 buffer - we know what pixels have been selected at that point
+
+- Add separated graphics to get "darker" or mid-range colours (50% - 66% of colour a + colour b) - DONE
+- Use oversampling of image for separated graphics mode
+
+- Get all this back into the video conversion tool...
+
+- Interlaced palette - creates 36 apparent colours by interlacing 8 colours together
+  = 8 + 7 + 6 + 5 + 4 + 3 + 2 + 1 = 36 colours
+- Naive thought was to inrease the search space to generate two MODE 7 screens simultaneously
+  this means the overall state is 30 bits (or 28 if remove separated mode flag) but this requires an allocation of
+  2^28 * 41 * 4 bytes ~= 41Gb.  Doh!  Should have checked the maths before I refactored the code.  :S
+
+- Second approach - instead of trying to use all 36 colours, solve the simpler problem of mapping to 21 colours
+  = 8 original colours + 7 "dark" colours (mixed with black) + 6 "light" colours (mixed with white)
+- Quantise the image into 21 colours then separate into two separate images:
+  = Colour always goes into field A image + black (dark) / normal (colour) / light (white) goes into field B image
+- Then use regular image conversion to produce MODE 7 frame for each image
+- Just hack quantise flag to spit out second image as by product after subtracting from desired image, then
+  run exe again without quantisation or scaling etc.  Should be quite quick to implement.
+- This works!  The two separated images are quite interesting, particularly A - but what do they actually contain?
+
+- Could do ordered dithering - for a given colour point find the closest line between our possible palette end
+  points.  (E.g. (0,0,0) - (255,0,0) distance to this line from (r,g,b) )
+  Then calculate how far along that line the closest point is (0=start of line, 1=end of line)
+  This can then be passed in to ordered dither matrix to choose between the two possible colours
+- Can do this at quantisation time and hope that algorithm achieves it.  Normally error is propagated at actual
+  pixel selection time.  How does ordered dither help here.  If we are selecting whether pixels are on or off for
+  a given pair of colours: calculate perpendicular distance of desired r,g,b from vector between our two colours
+  and then the parallel distance.  Use parallel distance + screen x,y as input into dither matrix.  This should
+  work across character cell boundaries, just might not be able to achieve intended dither given constraints.
+  How to calculate error in this case?  Error should be calculated as distance from the point on the line to the
+  desired pixel colour rather than the actual screen pixel colour selected (so evens out across dithered area)
+
+- That's not really how the algorithm works - we calculate the error for every combination of pixel on or off
+  We know our two possible colours (fg & bg).  Can calculate disance to that vector and distance along and therefore
+  whether the pixel at (x,y) should be on or off according to dither matrix.  If correct then pretend screen pixel
+  is the dither colour and return that error, otherwise return usual error.  This might work?!
+
+- Try 2x3 dither matrix as fits character cell better!
+
+
+Need to accomodate for the Mullard Hold Gfx bug!
+
+We have the exact glyphs used by Teletext, scaled up and additional pixels added at diagonals
+for smoothing.  Try matching entire character at 480x500 image resolution as per Puppeh version
+
+(Particularly relevant if getting the 75 row version of MODE 7 working properly - could match
+slices of different characters against the image to find best match.)
+
+Try a filter / image process of some sort to reduce the frequency of the data - need low freq

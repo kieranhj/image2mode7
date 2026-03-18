@@ -370,11 +370,9 @@ def greedy_row(err_table, gfx_table, frame_w,
 def dp_row(err_table, gfx_table, frame_w,
            use_hold=True, use_fill=True, use_sep=False):
     """
-    Vectorised bottom-up DP row encoder.  Near-optimal quality.
-    Optimisations applied:
-      1. err_by_state[s, char] precomputed once per column (not per candidate)
-      2. Next-state arrays precomputed before the column loop
-      3. All candidates batched into a single matrix; one argmin selects the best
+    Vectorised bottom-up DP row encoder.  Matches C++ -slow quality:
+    tries all 63 non-blank graphics characters per state so the DP can
+    account for HOLD_GFX picking up a non-locally-optimal gfx char later.
     """
     all_s  = np.arange(MAX_STATE, dtype=np.int32)
     fg_v   = all_s & 7
@@ -386,7 +384,7 @@ def dp_row(err_table, gfx_table, frame_w,
     INF = np.int32(2 ** 30)   # larger than any real cumulative error (max ~33M per row)
 
     # ------------------------------------------------------------------
-    # Suggestion 2: precompute everything that doesn't depend on column xi
+    # Precompute state-component arrays and column-independent next-states
     # ------------------------------------------------------------------
     ctrl_disp = np.where(hold_v, last_v, np.int32(MODE7_BLANK)).astype(np.int32)
     sep_cur   = (sep_v << 14).astype(np.int32)
@@ -400,117 +398,146 @@ def dp_row(err_table, gfx_table, frame_w,
         _hl = np.full(MAX_STATE, np.int32(MODE7_BLANK << 7), dtype=np.int32)
         hl_blank = hl_ctrl = hl_hold = hl_release = _hl
 
-    # Each candidate is described by:
-    #   (output_char, next_state_array, validity_mask, err_code)
-    # err_code selects which precomputed per-column error vector to use:
-    #   0 = blank display (all bg)
-    #   1 = ctrl_disp (hold ? last_gfx : blank) with current bg
-    #   2 = last_v display (HOLD_GFX Set-At effect)
-    #   3 = gc_v display  (gfx char — column-dependent)
-    #   4 = ctrl_disp with bg overridden to fg  (NEW_BG Set-At effect)
-    #   5 = ctrl_disp with bg overridden to 0   (BLACK_BG Set-At effect)
-    cands = []
+    # All 63 non-blank graphics characters (bit5 maps to bit6 for BR pixel)
+    GFX_CHARS = np.array([MODE7_BLANK | (i & 0x1f) | ((i & 0x20) << 1)
+                          for i in range(1, 64)], dtype=np.int32)  # (63,)
+    NUM_GFX = len(GFX_CHARS)
 
-    # BLANK
-    cands.append((MODE7_BLANK,
-                  (sep_cur | hl_blank | (bg_v << 3) | fg_v).astype(np.int32),
-                  None, 0))
-    # Colour changes c=1..7 (Set-After: error uses current fg/bg)
-    for c in range(1, 8):
-        cands.append((MODE7_GFX_COLOUR + c,
-                      (sep_cur | hl_ctrl | (bg_v << 3) | np.int32(c)).astype(np.int32),
-                      fg_v != c, 1))
-    if use_fill:
-        # NEW_BG — Set-At: bg becomes fg at this cell
-        cands.append((MODE7_NEW_BG,
-                      (sep_cur | hl_ctrl | (fg_v << 3) | fg_v).astype(np.int32),
-                      bg_v != fg_v, 4))
-        # BLACK_BG — Set-At: bg becomes 0 at this cell
-        cands.append((MODE7_BLACK_BG,
-                      (sep_cur | hl_ctrl | fg_v).astype(np.int32),
-                      bg_v != 0, 5))
+    # Next-state for each gfx char × each state (precomputed before column loop)
+    base_ns = (sep_cur | (hold_v << 6) | (bg_v << 3) | fg_v).astype(np.int32)  # (MAX_STATE,)
     if use_hold:
-        # HOLD_GFX — Set-At: hold=True, displays last_gfx immediately
-        cands.append((MODE7_HOLD_GFX,
-                      (sep_cur | hl_hold    | (bg_v << 3) | fg_v).astype(np.int32),
-                      hold_v == 0, 2))
-        # RELEASE_GFX — Set-At: hold=False, displays BLANK immediately
-        cands.append((MODE7_RELEASE_GFX,
-                      (sep_cur | hl_release | (bg_v << 3) | fg_v).astype(np.int32),
-                      hold_v == 1, 0))
-    if use_sep:
-        cands.append((MODE7_SEP_GFX,
-                      (np.int32(1 << 14) | hl_ctrl | (bg_v << 3) | fg_v).astype(np.int32),
-                      sep_v == 0, 1))
-        cands.append((MODE7_CONTIG_GFX,
-                      (hl_ctrl | (bg_v << 3) | fg_v).astype(np.int32),
-                      sep_v == 1, 1))
-    # Gfx char: next-state depends on gc_v (column-dependent) — placeholder
-    gfx_idx = len(cands)
-    cands.append((None, None, None, 3))
-
-    num_cands = len(cands)
-    err_codes = [ec for _, _, _, ec in cands]
-
-    # Stack the precomputed arrays into (num_cands, MAX_STATE) matrices.
-    # The gfx row is a placeholder overwritten each column.
-    ns_stack   = np.zeros((num_cands, MAX_STATE), dtype=np.int32)
-    char_stack = np.full((num_cands, MAX_STATE), MODE7_BLANK, dtype=np.int32)
-    mask_stack = np.zeros((num_cands, MAX_STATE), dtype=bool)   # True = valid
-
-    for i, (ch, ns, msk, _) in enumerate(cands):
-        if i == gfx_idx:
-            continue
-        ns_stack[i] = ns
-        char_stack[i] = ch                              # scalar broadcasts across row
-        mask_stack[i] = msk if msk is not None else True
+        ns_gfx = base_ns[None, :] | (GFX_CHARS[:, None] << 7)  # (63, MAX_STATE)
+    else:
+        ns_gfx = np.tile(base_ns | np.int32(MODE7_BLANK << 7), (NUM_GFX, 1))
 
     # ------------------------------------------------------------------
-    # DP sweep right-to-left
+    # Control-code candidates: (output_char, next_state_array, validity_mask)
+    # err_code key:
+    #   0 = blank display                    1 = ctrl_disp (current bg)
+    #   2 = last_v (HOLD Set-At)             4 = ctrl_disp with bg=fg (NEW_BG)
+    #   5 = ctrl_disp with bg=0 (BLACK_BG)
+    # ------------------------------------------------------------------
+    ctrl_cands = []
+    ctrl_cands.append((MODE7_BLANK,
+                       (sep_cur | hl_blank | (bg_v << 3) | fg_v).astype(np.int32),
+                       None, 0))
+    for c in range(1, 8):
+        ctrl_cands.append((MODE7_GFX_COLOUR + c,
+                           (sep_cur | hl_ctrl | (bg_v << 3) | np.int32(c)).astype(np.int32),
+                           fg_v != c, 1))
+    if use_fill:
+        ctrl_cands.append((MODE7_NEW_BG,
+                           (sep_cur | hl_ctrl | (fg_v << 3) | fg_v).astype(np.int32),
+                           bg_v != fg_v, 4))
+        ctrl_cands.append((MODE7_BLACK_BG,
+                           (sep_cur | hl_ctrl | fg_v).astype(np.int32),
+                           bg_v != 0, 5))
+    if use_hold:
+        ctrl_cands.append((MODE7_HOLD_GFX,
+                           (sep_cur | hl_hold    | (bg_v << 3) | fg_v).astype(np.int32),
+                           hold_v == 0, 2))
+        ctrl_cands.append((MODE7_RELEASE_GFX,
+                           (sep_cur | hl_release | (bg_v << 3) | fg_v).astype(np.int32),
+                           hold_v == 1, 0))
+    if use_sep:
+        ctrl_cands.append((MODE7_SEP_GFX,
+                           (np.int32(1 << 14) | hl_ctrl | (bg_v << 3) | fg_v).astype(np.int32),
+                           sep_v == 0, 1))
+        ctrl_cands.append((MODE7_CONTIG_GFX,
+                           (hl_ctrl | (bg_v << 3) | fg_v).astype(np.int32),
+                           sep_v == 1, 1))
+
+    NC = len(ctrl_cands)
+    num_cands = NC + NUM_GFX
+    err_codes_ctrl = [ec for _, _, _, ec in ctrl_cands]
+
+    # ------------------------------------------------------------------
+    # Ctrl candidate matrices (NC rows only; gfx handled separately below)
+    # ------------------------------------------------------------------
+    ns_stack   = np.empty((NC + 1, MAX_STATE), dtype=np.int32)  # +1 for gfx slot
+    char_stack = np.empty((NC + 1, MAX_STATE), dtype=np.int32)
+    mask_stack = np.ones ((NC + 1, MAX_STATE), dtype=bool)
+
+    for i, (ch, ns, msk, _) in enumerate(ctrl_cands):
+        ns_stack[i]   = ns
+        char_stack[i] = ch
+        if msk is not None:
+            mask_stack[i] = msk
+    # Row NC is the gfx slot: char updated per column, ns not used (cost pre-computed)
+
+    # Precomputed index arrays for fast per-column lookups
+    # err_table[xi] shape (8,8,2,128) → C-order flat first-3 dim: fg*16 + bg*2 + sep
+    fg_bg_sep_idx      = (fg_v * 16 + bg_v * 2 + sep_v).astype(np.int32)  # (MAX_STATE,)
+    fg_bg_sep_fg_idx   = (fg_v * 16 + fg_v * 2 + sep_v).astype(np.int32)  # bg=fg
+    fg_bg_sep_zero_idx = (fg_v * 16 +           sep_v ).astype(np.int32)   # bg=0
+    # dp_next reshaped as (2, 128, 128) for gfx future-cost lookups
+    # Combined (sep, base_lower) index: 2*128=256 unique values
+    base_lower_v    = (all_s & np.int32(0x7F)).astype(np.int32)            # (MAX_STATE,)
+    sep_base_low_v  = (sep_v * np.int32(128) + base_lower_v).astype(np.int32)  # 0..255
+
+    # ------------------------------------------------------------------
+    # Preallocate per-column workspace
     # ------------------------------------------------------------------
     dp_next       = np.zeros(MAX_STATE, dtype=np.int32)
     best_char_arr = np.full((frame_w, MAX_STATE), MODE7_BLANK, dtype=np.int32)
-    err_mat       = np.empty((num_cands, MAX_STATE), dtype=np.int32)  # preallocated
-    total_mat     = np.empty((num_cands, MAX_STATE), dtype=np.int32)  # preallocated
+    err_mat       = np.empty((NC,     MAX_STATE), dtype=np.int32)
+    total_mat     = np.empty((NC + 1, MAX_STATE), dtype=np.int32)
+    gfx_work      = np.empty((MAX_STATE, NUM_GFX), dtype=np.int32)  # (32768, 63)
 
     for xi in range(frame_w - 1, -1, -1):
 
-        # Direct 5D gathers: one (MAX_STATE,) read per error code.
-        # err_table is int64 so no astype needed.
-        et_xi = err_table[xi]                               # (8,8,2,128) view, no copy
+        et_flat = err_table[xi].reshape(128, 128)       # (fg_bg_sep, char) view, free
 
-        ec0 = et_xi[fg_v, bg_v, sep_v, MODE7_BLANK]        # blank display
-        ec1 = et_xi[fg_v, bg_v, sep_v, ctrl_disp]          # ctrl_disp, current bg
-        ec2 = et_xi[fg_v, bg_v, sep_v, last_v]             # last_gfx (HOLD Set-At)
+        # ----------------------------------------------------------
+        # Gfx candidates — two-level to stay cache-friendly
+        # Level 1: find best gfx char per state via (MAX_STATE, 63) argmin axis=1
+        #   source tables: (128, 63) err compact and (2,128,128) dp_next → fit in cache
+        # ----------------------------------------------------------
+        # Error for each gfx char per state: gather from (128, 63) compact table
+        gfx_err_compact = et_flat[:, GFX_CHARS]         # (128, 63) — 32KB, L1 friendly
+        np.take(gfx_err_compact, fg_bg_sep_idx,
+                axis=0, out=gfx_work)                   # (32768, 63) gather from 32KB
 
-        # Column-dependent gfx char
-        gc_v = gfx_table[xi, fg_v, bg_v, sep_v].astype(np.int32)
-        ec3  = et_xi[fg_v, bg_v, sep_v, gc_v]              # gfx char display
-
-        if use_fill:
-            ec4 = et_xi[fg_v, fg_v,   sep_v, ctrl_disp]    # NEW_BG Set-At
-            ec5 = et_xi[fg_v, bg_zero, sep_v, ctrl_disp]   # BLACK_BG Set-At
-        else:
-            ec4 = ec5 = ec0  # unused; placeholders (err_codes won't reference 4/5)
-
-        ec = (ec0, ec1, ec2, ec3, ec4, ec5)
-
-        # Update gfx candidate row (ns and char depend on gc_v)
+        # dp_next future-cost for gfx next-states.
+        # Build a compact (256, 63) table indexed by (sep*128+base_lower, gfx_char_slot).
+        # Source dp_next_3d is (2,128,128)=128KB; slice to (256,63)=64KB → fits in L2.
         if use_hold:
-            hl_gfx = ((gc_v << 7) | (hold_v << 6)).astype(np.int32)
+            # dp_next_3d[:, GFX_CHARS, :] shape (2,63,128) → reshape+transpose → (256,63)
+            dp_gfx_fut = dp_next.reshape(2, 128, 128)[:, GFX_CHARS, :].transpose(0,2,1).reshape(256, NUM_GFX)
+            gfx_work += dp_gfx_fut[sep_base_low_v]   # gather from (256,63) → (32768,63)
         else:
-            hl_gfx = np.full(MAX_STATE, np.int32(MODE7_BLANK << 7), dtype=np.int32)
-        ns_stack  [gfx_idx] = (sep_cur | hl_gfx | (bg_v << 3) | fg_v).astype(np.int32)
-        char_stack[gfx_idx] = gc_v
-        mask_stack[gfx_idx] = gc_v != np.int32(MODE7_BLANK)
+            fut_1d = dp_next.reshape(2, 128, 128)[sep_v, MODE7_BLANK, base_lower_v]
+            gfx_work += fut_1d[:, None]               # broadcast (32768,1)
 
-        # Fill err_mat in-place (avoids np.stack allocation each column)
-        for i, code in enumerate(err_codes):
-            err_mat[i] = ec[code]
-        np.add(err_mat, dp_next[ns_stack], out=total_mat)
-        total_mat[~mask_stack] = INF
+        # argmin axis=1: cache-friendly (63 contiguous values per state)
+        best_gfx_j    = gfx_work.argmin(axis=1)         # (32768,)
+        best_gfx_cost = gfx_work[all_s, best_gfx_j]     # (32768,)
+        char_stack[NC] = GFX_CHARS[best_gfx_j]          # update gfx char slot
 
-        best_c = np.argmin(total_mat, axis=0)                   # (MAX_STATE,)
+        # ----------------------------------------------------------
+        # Control candidates — (NC, 32768) as before
+        # ----------------------------------------------------------
+        ec0 = et_flat[fg_bg_sep_idx,      MODE7_BLANK]   # blank display
+        ec1 = et_flat[fg_bg_sep_idx,      ctrl_disp]     # ctrl_disp, current bg
+        ec2 = et_flat[fg_bg_sep_idx,      last_v]        # last_gfx (HOLD Set-At)
+        if use_fill:
+            ec4 = et_flat[fg_bg_sep_fg_idx,   ctrl_disp] # NEW_BG Set-At
+            ec5 = et_flat[fg_bg_sep_zero_idx, ctrl_disp] # BLACK_BG Set-At
+        else:
+            ec4 = ec5 = ec0
+
+        ec_lut = (ec0, ec1, ec2, None, ec4, ec5)
+        for i, code in enumerate(err_codes_ctrl):
+            err_mat[i] = ec_lut[code]
+        np.add(err_mat, dp_next[ns_stack[:NC]], out=total_mat[:NC])
+        total_mat[:NC][~mask_stack[:NC]] = INF
+
+        # ----------------------------------------------------------
+        # Combine: ctrl (NC rows) + best-gfx (1 row) → argmin over NC+1
+        # ----------------------------------------------------------
+        total_mat[NC] = best_gfx_cost
+
+        best_c = np.argmin(total_mat, axis=0)            # (MAX_STATE,) over NC+1 rows
         best_char_arr[xi] = char_stack[best_c, all_s]
         dp_next = total_mat[best_c, all_s]
 

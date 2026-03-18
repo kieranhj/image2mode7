@@ -16,7 +16,9 @@ Usage:
 import sys
 import argparse
 import base64
+import os
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from PIL import Image
@@ -596,17 +598,21 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
 
     solver = dp_row if slow else greedy_row
 
-    for y7 in range(frame_h):
-        print(f"\rProcessing row {y7+1}/{frame_h}...", end='', file=sys.stderr)
-        err_table, gfx_table = build_error_table(arr, y7, frame_w)
-        row = solver(err_table, gfx_table, frame_w,
-                     use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
-        for x7 in range(MODE7_WIDTH):
-            page[y7 * MODE7_WIDTH + x7] = row[x7]
+    def _solve_row(y7):
+        et, gt = build_error_table(arr, y7, frame_w)
+        return solver(et, gt, frame_w,
+                      use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
 
-        # If image narrower than screen, reset background after frame content
-        if FRAME_FIRST_COLUMN + frame_w < MODE7_WIDTH:
-            page[y7 * MODE7_WIDTH + FRAME_FIRST_COLUMN + frame_w] = MODE7_BLACK_BG
+    num_workers = min(frame_h, os.cpu_count() or 1)
+    completed = 0
+    with ThreadPoolExecutor(max_workers=num_workers) as pool:
+        for y7, row in enumerate(pool.map(_solve_row, range(frame_h))):
+            completed += 1
+            print(f"\rProcessing row {completed}/{frame_h}...", end='', file=sys.stderr)
+            for x7 in range(MODE7_WIDTH):
+                page[y7 * MODE7_WIDTH + x7] = row[x7]
+            if FRAME_FIRST_COLUMN + frame_w < MODE7_WIDTH:
+                page[y7 * MODE7_WIDTH + FRAME_FIRST_COLUMN + frame_w] = MODE7_BLACK_BG
 
     print(f"\rDone.                         ", file=sys.stderr)
     return page

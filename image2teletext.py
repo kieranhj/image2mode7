@@ -194,6 +194,42 @@ def best_gfx_char(img, x7, y7, fg, bg, sep):
 # Image pre-quantization (matches C++ -quant)
 # ---------------------------------------------------------------------------
 
+def floyd_steinberg_dither(arr):
+    """
+    Floyd-Steinberg error diffusion dithering, quantizing to the 8-colour
+    Teletext palette.  Applied at sub-pixel level after resize and sharpening.
+
+    Each pixel is snapped to the nearest palette colour and the quantization
+    error is diffused to the four eastern/southern neighbours with the classic
+    7/16, 3/16, 5/16, 1/16 weights.  At Mode 7's low sub-pixel resolution the
+    patterns may be visible, but dithering can improve gradients and tone range.
+
+    Input/output: (H, W, 3) uint8 array.
+    """
+    palette = np.array(COLOR_RGB, dtype=np.float32)   # (8, 3)
+    buf = arr[:, :, :3].astype(np.float32)             # work in float to accumulate error
+    h, w = buf.shape[:2]
+
+    for y in range(h):
+        for x in range(w):
+            old = buf[y, x].copy()
+            dists = ((old[None, :] - palette) ** 2).sum(axis=1)
+            new   = palette[dists.argmin()]
+            buf[y, x] = new
+            err = old - new                            # quantization error (3,)
+
+            if x + 1 < w:
+                buf[y,     x + 1] = np.clip(buf[y,     x + 1] + err * (7 / 16), 0, 255)
+            if y + 1 < h:
+                if x > 0:
+                    buf[y + 1, x - 1] = np.clip(buf[y + 1, x - 1] + err * (3 / 16), 0, 255)
+                buf[y + 1, x    ] = np.clip(buf[y + 1, x    ] + err * (5 / 16), 0, 255)
+                if x + 1 < w:
+                    buf[y + 1, x + 1] = np.clip(buf[y + 1, x + 1] + err * (1 / 16), 0, 255)
+
+    return buf.astype(np.uint8)
+
+
 def quantize_image(arr, sat=64, val=64, black=64, white=128):
     """Pre-quantize each pixel to the nearest Teletext 8-colour palette entry.
 
@@ -671,7 +707,8 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=False, luma=False,
                   filter='bilinear', quant=False, sat=64, val=64, black=64, white=128, par=1.0,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
-                  gamma=1.0, contrast=1.0, saturation=1.0, linear=False):
+                  gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
+                  dither=False):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -728,6 +765,9 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         sharpened = Image.fromarray(arr).filter(
             UnsharpMask(radius=sharpen_radius, percent=sharpen_amount, threshold=sharpen_threshold))
         arr = np.array(sharpened, dtype=np.uint8)
+
+    if dither:
+        arr = floyd_steinberg_dither(arr)
 
     if quant:
         arr = quantize_image(arr, sat=sat, val=val, black=black, white=white)
@@ -1078,6 +1118,14 @@ def main():
                              'Much faster but lower quality, useful for quick previews.')
     parser.add_argument('--luma', action='store_true',
                         help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
+    parser.add_argument('--dither', action='store_true',
+                        help='Apply Floyd-Steinberg error diffusion dithering at sub-pixel level '
+                             'after resize and sharpening. Quantizes each sub-pixel to the nearest '
+                             'Teletext palette colour and diffuses the error to neighbours '
+                             '(7/16 right, 5/16 below, 3/16 below-left, 1/16 below-right). '
+                             'May improve gradients and tone range but can create visible noise '
+                             'patterns at Mode 7\'s low resolution. Best combined with '
+                             '--saturation to push source colours toward the palette first.')
     parser.add_argument('--linear', action='store_true',
                         help='Linearise source pixels from sRGB to linear light before computing '
                              'squared error. Source images are gamma-encoded (~2.2); computing '
@@ -1195,6 +1243,7 @@ def main():
         contrast=args.contrast,
         saturation=args.saturation,
         linear=args.linear,
+        dither=args.dither,
     )
 
     # Write binary

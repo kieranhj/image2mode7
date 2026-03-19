@@ -425,14 +425,13 @@ def dp_row(err_table, gfx_table, frame_w,
     #   2 = last_v (HOLD Set-At)             4 = ctrl_disp with bg=fg (NEW_BG)
     #   5 = ctrl_disp with bg=0 (BLACK_BG)
     # ------------------------------------------------------------------
+    # Candidate order matches C++ get_error_for_remainder_of_line evaluation order,
+    # which determines tie-breaking (strict < means first candidate wins a tie):
+    #   BLANK, NEW_BG, BLACK_BG, SEP, HOLD/RELEASE, colours 1-7, gfx chars
     ctrl_cands = []
     ctrl_cands.append((MODE7_BLANK,
                        (sep_cur | hl_blank | (bg_v << 3) | fg_v).astype(np.int32),
                        None, 0))
-    for c in range(1, 8):
-        ctrl_cands.append((MODE7_GFX_COLOUR + c,
-                           (sep_cur | hl_ctrl | (bg_v << 3) | np.int32(c)).astype(np.int32),
-                           fg_v != c, 1))
     if use_fill:
         ctrl_cands.append((MODE7_NEW_BG,
                            (sep_cur | hl_ctrl | (fg_v << 3) | fg_v).astype(np.int32),
@@ -440,13 +439,6 @@ def dp_row(err_table, gfx_table, frame_w,
         ctrl_cands.append((MODE7_BLACK_BG,
                            (sep_cur | hl_ctrl | fg_v).astype(np.int32),
                            bg_v != 0, 5))
-    if use_hold:
-        ctrl_cands.append((MODE7_HOLD_GFX,
-                           (sep_cur | hl_hold    | (bg_v << 3) | fg_v).astype(np.int32),
-                           hold_v == 0, 2))
-        ctrl_cands.append((MODE7_RELEASE_GFX,
-                           (sep_cur | hl_release | (bg_v << 3) | fg_v).astype(np.int32),
-                           hold_v == 1, 0))
     if use_sep:
         ctrl_cands.append((MODE7_SEP_GFX,
                            (np.int32(1 << 14) | hl_ctrl | (bg_v << 3) | fg_v).astype(np.int32),
@@ -454,6 +446,17 @@ def dp_row(err_table, gfx_table, frame_w,
         ctrl_cands.append((MODE7_CONTIG_GFX,
                            (hl_ctrl | (bg_v << 3) | fg_v).astype(np.int32),
                            sep_v == 1, 1))
+    if use_hold:
+        ctrl_cands.append((MODE7_HOLD_GFX,
+                           (sep_cur | hl_hold    | (bg_v << 3) | fg_v).astype(np.int32),
+                           hold_v == 0, 2))
+        ctrl_cands.append((MODE7_RELEASE_GFX,
+                           (sep_cur | hl_release | (bg_v << 3) | fg_v).astype(np.int32),
+                           hold_v == 1, 0))
+    for c in range(1, 8):
+        ctrl_cands.append((MODE7_GFX_COLOUR + c,
+                           (sep_cur | hl_ctrl | (bg_v << 3) | np.int32(c)).astype(np.int32),
+                           fg_v != c, 1))
 
     NC = len(ctrl_cands)
     num_cands = NC + NUM_GFX

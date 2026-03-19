@@ -964,27 +964,16 @@ def render_preview(page):
                     bit = GFX_PIXEL_BITS[sixel_idx]
                     is_set = bool(display_char & bit)
                     if sep and is_set:
-                        # Separated graphics — SAA5050 layout in a 6×9 conceptual pixel cell:
-                        #   Each sub-pixel block is 3 conceptual px wide; 2 are active, 1 is gap (right).
-                        #   Top row:    2×2 active, gap at bottom of its 3-row section.
-                        #   Middle row: 2×3 active, full height (no vertical gap).
-                        #   Bottom row: 2×2 active, gap at TOP of its 3-row section,
-                        #               which creates the visible gap between middle and bottom.
+                        # Separated graphics — each sub-pixel block has a gap on the
+                        # left and a gap at the bottom; active fg area is top-right.
                         # (x*2+1)//3 rounds 2x/3 to the nearest integer.
                         act_w = (cw * 2 + 1) // 3
-                        if row_idx == 1:    # middle: full height
-                            act_h   = rh
-                            y_start = 0
-                        elif row_idx == 0:  # top: gap at bottom
-                            act_h   = (rh * 2 + 1) // 3
-                            y_start = 0
-                        else:               # bottom: gap at top
-                            act_h   = (rh * 2 + 1) // 3
-                            y_start = rh - act_h
-                        img[y_px + y_off           : y_px + y_off + rh,
-                            x_px + x_off           : x_px + x_off + cw] = COLOR_RGB[bg]
-                        img[y_px + y_off + y_start : y_px + y_off + y_start + act_h,
-                            x_px + x_off           : x_px + x_off + act_w] = COLOR_RGB[fg]
+                        act_h = (rh * 2 + 1) // 3
+                        gap_w = cw - act_w
+                        img[y_px + y_off          : y_px + y_off + rh,
+                            x_px + x_off          : x_px + x_off + cw] = COLOR_RGB[bg]
+                        img[y_px + y_off          : y_px + y_off + act_h,
+                            x_px + x_off + gap_w  : x_px + x_off + cw] = COLOR_RGB[fg]
                     else:
                         r, g, b = screen_rgb(is_set, fg, bg, sep=False)
                         img[y_px + y_off : y_px + y_off + rh,

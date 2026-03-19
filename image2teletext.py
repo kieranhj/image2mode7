@@ -981,6 +981,57 @@ def write_to_ssd(ssd_path, bbc_name, data, load_addr=0x7C00, exec_addr=0x7C00):
 # Main
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Presets — named combinations of options for common use cases.
+# Individual flags always override the preset value.
+# ---------------------------------------------------------------------------
+
+PRESETS = {
+    'photo': dict(
+        # Photographic sources: portraits, landscapes, general images.
+        # Boosts saturation to exploit the fully-saturated Teletext palette,
+        # lifts contrast slightly, and applies moderate sharpening.
+        saturation=1.8, contrast=1.3,
+        sharpen_amount=150, sharpen_radius=1.0, sharpen_threshold=3,
+    ),
+    'vivid': dict(
+        # High-impact look with punchy colours and strong edge definition.
+        # Good for images that need to read clearly at a distance.
+        saturation=2.5, contrast=1.5,
+        sharpen_amount=200, sharpen_radius=1.0,
+    ),
+    'graphic': dict(
+        # Flat-colour artwork, logos, cartoons, pixel art.
+        # Strong sharpening with a tight radius to preserve hard edges;
+        # high saturation to snap to palette colours; no threshold so every
+        # edge is enhanced.
+        saturation=2.0, contrast=1.5,
+        sharpen_amount=300, sharpen_radius=0.5, sharpen_threshold=0,
+    ),
+    'dark': dict(
+        # Dark or underexposed source images.
+        # Gamma lift brightens shadows; modest contrast and saturation boost.
+        gamma=1.8, saturation=1.5, contrast=1.4,
+        sharpen_amount=100, sharpen_radius=1.0, sharpen_threshold=5,
+    ),
+    'tv': dict(
+        # Viewing on a modern LCD television.
+        # Applies the correct PAR for Ceefax-era display (1.2) and the photo
+        # colour/sharpening settings.
+        par=1.2,
+        saturation=1.8, contrast=1.3,
+        sharpen_amount=150, sharpen_radius=1.0, sharpen_threshold=3,
+    ),
+    'crt': dict(
+        # Viewing on a CRT television.
+        # Uses the mathematically derived PAR for the SAA5050 on a PAL CRT.
+        par=1.22,
+        saturation=1.8, contrast=1.3,
+        sharpen_amount=150, sharpen_radius=1.0, sharpen_threshold=3,
+    ),
+}
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Convert a PNG image to Teletext/Mode 7 graphics (40×25 chars, 1000 bytes).')
@@ -1062,6 +1113,21 @@ def main():
     parser.add_argument('--ssd-name', metavar='NAME',
                         help='BBC DFS filename on the disk (max 7 chars, '
                              'default: input filename stem)')
+    parser.add_argument('--preset', choices=sorted(PRESETS),
+                        help='Named combination of options for common use cases. '
+                             'Any explicit flag overrides the preset value. '
+                             'photo: portraits/landscapes (saturation+contrast boost, sharpening); '
+                             'vivid: punchy colours, strong edges; '
+                             'graphic: logos/cartoons (tight sharpening, high saturation); '
+                             'dark: underexposed images (gamma lift); '
+                             'tv: LCD TV viewing (PAR 1.2 + photo settings); '
+                             'crt: CRT TV viewing (PAR 1.22 + photo settings).')
+
+    # Two-pass parse: first pass reads --preset, then its values become
+    # defaults so any explicitly-provided flags still take precedence.
+    args, _ = parser.parse_known_args()
+    if args.preset:
+        parser.set_defaults(**PRESETS[args.preset])
     args = parser.parse_args()
 
     input_path = Path(args.input)

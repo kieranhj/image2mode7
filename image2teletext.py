@@ -623,6 +623,23 @@ _FILTER_MAP = {
     'nearest':  Image.NEAREST,
 }
 
+
+def _cimg_nearest_resize(arr, dst_w, dst_h):
+    """
+    Resize numpy array (H, W, 3) using CImg's default nearest-neighbour interpolation.
+
+    CImg (interpolation_type=1) maps:  source_x = floor(x * src_w / dst_w)
+    PIL nearest maps:                  source_x = floor((x + 0.5) * src_w / dst_w)
+
+    The left-aligned (no +0.5) formula matches the offset-table logic in CImg's
+    get_resize() case 1, producing an exact pixel-for-pixel match to the C++ exe output.
+    """
+    src_h, src_w = arr.shape[:2]
+    xs = np.floor(np.arange(dst_w) * src_w / dst_w).astype(np.int32)
+    ys = np.floor(np.arange(dst_h) * src_h / dst_h).astype(np.int32)
+    return arr[np.ix_(ys, xs)]
+
+
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False,
                   filter='bilinear', quant=False, sat=64, val=64, black=64, white=128):
     """
@@ -644,8 +661,11 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
         if pw % 2:
             pw += 1
 
-    img = img.resize((pw, ph), _FILTER_MAP[filter])
-    arr = np.array(img, dtype=np.uint8)
+    if filter == 'cimg':
+        arr = _cimg_nearest_resize(np.array(img, dtype=np.uint8), pw, ph)
+    else:
+        img = img.resize((pw, ph), _FILTER_MAP[filter])
+        arr = np.array(img, dtype=np.uint8)
 
     if quant:
         arr = quantize_image(arr, sat=sat, val=val, black=black, white=white)
@@ -944,9 +964,10 @@ def main():
                         help='Use full DP solver (near-optimal quality, much slower)')
     parser.add_argument('--luma', action='store_true',
                         help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
-    parser.add_argument('--filter', choices=['bilinear', 'lanczos', 'bicubic', 'nearest'],
+    parser.add_argument('--filter', choices=['bilinear', 'lanczos', 'bicubic', 'nearest', 'cimg'],
                         default='bilinear',
-                        help='Resampling filter for image resize (default: bilinear)')
+                        help='Resampling filter for image resize (default: bilinear). '
+                             'cimg matches the left-aligned nearest-neighbour used by the C++ executable.')
     parser.add_argument('--quant', action='store_true',
                         help='Pre-quantize image to Teletext 8-colour palette before conversion')
     parser.add_argument('--sat',   type=int, default=64,

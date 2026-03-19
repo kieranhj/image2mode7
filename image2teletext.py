@@ -182,6 +182,51 @@ def best_gfx_char(img, x7, y7, fg, bg, sep):
     return c
 
 # ---------------------------------------------------------------------------
+# Image pre-quantization (matches C++ -quant)
+# ---------------------------------------------------------------------------
+
+def quantize_image(arr, sat=64, val=64, black=64, white=128):
+    """Pre-quantize each pixel to the nearest Teletext 8-colour palette entry.
+
+    Matches C++ -quant behaviour:
+      - Low-saturation (grey) pixels map to a brightness ramp: black / blue / cyan / white.
+      - Saturated pixels snap to the nearest palette colour by squared RGB distance.
+        Dark saturated pixels (value < val) are mapped to black.
+
+    Default thresholds match C++ defaults: sat=64, val=64, black=64, white=128.
+    """
+    R = arr[:, :, 0].astype(np.int32)
+    G = arr[:, :, 1].astype(np.int32)
+    B = arr[:, :, 2].astype(np.int32)
+
+    M = np.maximum(np.maximum(R, G), B)          # value = max channel
+    C = M - np.minimum(np.minimum(R, G), B)      # chroma
+
+    # Saturation: 255*C/V; 0 for achromatic pixels
+    S = np.where(M > 0, (255 * C) // np.maximum(M, 1), 0)
+
+    # Grey path: map value into black(0) / blue(4) / cyan(6) / white(7) ramp
+    midpoint = (white - black) // 2
+    grey_idx = np.where(M < black,              np.int32(0),
+               np.where(M < black + midpoint,   np.int32(4),
+               np.where(M < white,              np.int32(6),
+                                                np.int32(7))))
+
+    # Colour path: nearest palette colour by squared RGB distance
+    palette = np.array(COLOR_RGB, dtype=np.int32)           # (8, 3)
+    flat    = arr[:, :, :3].reshape(-1, 3).astype(np.int32) # (N, 3)
+    dists   = ((flat[:, None, :] - palette[None, :, :]) ** 2).sum(axis=2)  # (N, 8)
+    nearest_idx = dists.argmin(axis=1).reshape(arr.shape[:2])               # (h, w)
+
+    # Dark saturated pixels fall back to black
+    colour_idx = np.where(M < val, np.int32(0), nearest_idx)
+
+    # Choose grey or colour path per pixel
+    idx = np.where(S < sat, grey_idx, colour_idx)
+    return palette[idx].astype(np.uint8)
+
+
+# ---------------------------------------------------------------------------
 # Precompute per-row error lookup table (numpy vectorised)
 # ---------------------------------------------------------------------------
 
@@ -579,7 +624,7 @@ _FILTER_MAP = {
 }
 
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False,
-                  filter='bilinear'):
+                  filter='bilinear', quant=False, sat=64, val=64, black=64, white=128):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -601,6 +646,9 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
 
     img = img.resize((pw, ph), _FILTER_MAP[filter])
     arr = np.array(img, dtype=np.uint8)
+
+    if quant:
+        arr = quantize_image(arr, sat=sat, val=val, black=black, white=white)
 
     frame_w = pw // 2
     frame_h = ph // 3
@@ -899,6 +947,16 @@ def main():
     parser.add_argument('--filter', choices=['bilinear', 'lanczos', 'bicubic', 'nearest'],
                         default='bilinear',
                         help='Resampling filter for image resize (default: bilinear)')
+    parser.add_argument('--quant', action='store_true',
+                        help='Pre-quantize image to Teletext 8-colour palette before conversion')
+    parser.add_argument('--sat',   type=int, default=64,
+                        help='Saturation threshold for grey detection (default: 64)')
+    parser.add_argument('--val',   type=int, default=64,
+                        help='Value threshold below which saturated pixels become black (default: 64)')
+    parser.add_argument('--black', type=int, default=64,
+                        help='Value below which grey pixels map to black (default: 64)')
+    parser.add_argument('--white', type=int, default=128,
+                        help='Value above which grey pixels map to white (default: 128)')
     parser.add_argument('--ssd', metavar='DISK.SSD',
                         help='Add output to a BBC Micro DFS .ssd disk image '
                              '(80-track, created if it does not exist)')
@@ -922,6 +980,11 @@ def main():
         use_sep=args.sep,
         luma=args.luma,
         filter=args.filter,
+        quant=args.quant,
+        sat=args.sat,
+        val=args.val,
+        black=args.black,
+        white=args.white,
     )
 
     # Write binary

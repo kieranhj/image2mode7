@@ -354,35 +354,18 @@ def _effective_cell(proposed_char, fg, bg, hold_mode, last_gfx, sep):
     return dc, eff_bg
 
 
-def _best_initial_colour(err_table, gfx_table):
-    """Choose the starting fg colour (1-7) that gives lowest error on column 0."""
-    min_err = 10 ** 18
-    min_col = 7
-    for fg in range(7, 0, -1):
-        gc  = int(gfx_table[0, fg, 0, 0])
-        err = int(err_table[0, fg, 0, 0, gc])
-        if err < min_err:
-            min_err = err
-            min_col = fg
-    return min_col
-
-
-# ---------------------------------------------------------------------------
-# Fast greedy solver (--greedy — 2-step lookahead)
-# ---------------------------------------------------------------------------
-
-def greedy_row(err_table, gfx_table, frame_w,
-               use_hold=True, use_fill=True, use_sep=False):
+def _greedy_row_from(start_fg, err_table, gfx_table, frame_w,
+                     use_hold, use_fill, use_sep):
     """
-    Greedy row encoder with 2-step lookahead.  Fast (~ms per row).
-    err_table, gfx_table: precomputed from build_error_table().
+    Run the greedy solver (2-step lookahead) from a given starting colour.
+    Returns (result, total_error) where total_error is the sum of immediate
+    per-character errors (used to compare starting colours).
     """
     row_end = FRAME_FIRST_COLUMN + frame_w
-    min_col = _best_initial_colour(err_table, gfx_table)
-
     result = [MODE7_BLANK] * MODE7_WIDTH
-    result[0] = MODE7_GFX_COLOUR + min_col
-    state = pack_state(min_col, 0, False, MODE7_BLANK, False)
+    result[0] = MODE7_GFX_COLOUR + start_fg
+    state = pack_state(start_fg, 0, False, MODE7_BLANK, False)
+    total_err = 0
 
     for x7 in range(FRAME_FIRST_COLUMN, row_end):
         xi = x7 - FRAME_FIRST_COLUMN
@@ -401,19 +384,42 @@ def greedy_row(err_table, gfx_table, frame_w,
             if x7 + 1 < row_end:
                 ns = next_state(char, state, use_hold, use_fill, use_sep)
                 nfg, nbg, nhold, nlast, nsep = unpack_state(ns)
-                xi2 = xi + 1
-                ngc = int(gfx_table[xi2, nfg, nbg, nsep])
+                ngc = int(gfx_table[xi + 1, nfg, nbg, nsep])
                 ndc, neff_bg = _effective_cell(ngc, nfg, nbg, nhold, nlast, nsep)
-                err += int(err_table[xi2, nfg, neff_bg, nsep, ndc])
+                err += int(err_table[xi + 1, nfg, neff_bg, nsep, ndc])
 
             if err < best_err:
                 best_err  = err
                 best_char = char
 
         result[x7] = best_char
+        # Score by immediate error only (not lookahead) for fair start comparison
+        dc, eff_bg = _effective_cell(best_char, fg, bg, hold_mode, last_gfx, sep)
+        total_err += int(err_table[xi, fg, eff_bg, sep, dc])
         state = next_state(best_char, state, use_hold, use_fill, use_sep)
 
-    return result
+    return result, total_err
+
+
+# ---------------------------------------------------------------------------
+# Fast greedy solver (--greedy — multi-start, 2-step lookahead)
+# ---------------------------------------------------------------------------
+
+def greedy_row(err_table, gfx_table, frame_w,
+               use_hold=True, use_fill=True, use_sep=False):
+    """
+    Greedy row encoder with 2-step lookahead and multi-start.
+    Tries all 7 starting colours and keeps the lowest-error result.
+    """
+    best_result = None
+    best_err    = 10 ** 18
+    for fg in range(1, 8):
+        result, err = _greedy_row_from(fg, err_table, gfx_table, frame_w,
+                                       use_hold, use_fill, use_sep)
+        if err < best_err:
+            best_err    = err
+            best_result = result
+    return best_result
 
 
 # ---------------------------------------------------------------------------
@@ -597,8 +603,11 @@ def dp_row(err_table, gfx_table, frame_w,
         best_char_arr[xi] = char_stack[best_c, all_s]
         dp_next = total_mat[best_c, all_s]
 
-    # Forward simulation from the initial state to recover the optimal sequence
-    min_col    = _best_initial_colour(err_table, gfx_table)
+    # Forward simulation from the initial state to recover the optimal sequence.
+    # dp_next[state] now holds the total row cost achievable from that state,
+    # so we read off the best starting colour directly from the DP result.
+    min_col    = min(range(1, 8),
+                     key=lambda fg: int(dp_next[pack_state(fg, 0, False, MODE7_BLANK, False)]))
     result     = [MODE7_BLANK] * MODE7_WIDTH
     result[0]  = MODE7_GFX_COLOUR + min_col
     init_state = pack_state(min_col, 0, False, MODE7_BLANK, False)

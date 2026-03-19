@@ -56,6 +56,15 @@ SEP_FG_FACTOR = 128  # blending factor for separated graphics (0-255)
 # metric accordingly makes the DP prioritise brightness accuracy over hue.
 LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 
+# Lookup table: sRGB byte value (0-255) → linearised value scaled back to 0-255.
+# The Teletext palette contains only 0 and 255, which map to 0 and 255 unchanged,
+# so only source pixel values need this correction.
+# Formula: c = v/255; linear = c/12.92 if c<=0.04045 else ((c+0.055)/1.055)^2.4
+_c = np.arange(256, dtype=np.float64) / 255.0
+_SRGB_LUT = np.where(_c <= 0.04045, _c / 12.92,
+                     ((_c + 0.055) / 1.055) ** 2.4).astype(np.float32) * 255.0
+del _c
+
 # State is a 15-bit integer: (sep:1)(last_gfx:7)(hold:1)(bg:3)(fg:3)
 MAX_STATE = 1 << 15  # 32768
 
@@ -230,13 +239,17 @@ def quantize_image(arr, sat=64, val=64, black=64, white=128):
 # Precompute per-row error lookup table (numpy vectorised)
 # ---------------------------------------------------------------------------
 
-def build_error_table(img, y7, frame_w, luma=False):
+def build_error_table(img, y7, frame_w, luma=False, linear=False):
     """
     Return err_table[x7_idx, fg, bg, sep, screen_char] = total squared RGB error
     for displaying screen_char (0-127) at character column x7_idx in row y7,
     with the given fg/bg palette indices and sep flag.
 
     Also returns gfx_table[x7_idx, fg, bg, sep] = optimal graphics character.
+
+    linear: if True, linearise source pixel values from sRGB to linear light
+            before computing squared error (more perceptually correct).
+            The Teletext palette is all 0s and 255s so is unchanged by linearisation.
     """
     # Extract pixel values: shape (frame_w, 6, 3)
     pixels = np.empty((frame_w, 6, 3), dtype=np.float32)
@@ -249,6 +262,12 @@ def build_error_table(img, y7, frame_w, luma=False):
         pixels[xi, 3] = img[y+1, x+1, :3]
         pixels[xi, 4] = img[y+2, x,   :3]
         pixels[xi, 5] = img[y+2, x+1, :3]
+
+    if linear:
+        # Map each uint8 pixel value through the sRGB→linear LUT.
+        # Palette colours (0 and 255) are unchanged (0→0, 255→255), so only
+        # source pixels need correction; disp computation below is unaffected.
+        pixels = _SRGB_LUT[pixels.astype(np.int32)]
 
     # screen_bits[sc, sixel] = 1 if that sub-pixel is "on" for screen char sc
     # Bit positions: [0,1,2,3,4,6] map to sixels [TL,TR,ML,MR,BL,BR]
@@ -652,7 +671,7 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=False, luma=False,
                   filter='bilinear', quant=False, sat=64, val=64, black=64, white=128, par=1.0,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
-                  gamma=1.0, contrast=1.0, saturation=1.0):
+                  gamma=1.0, contrast=1.0, saturation=1.0, linear=False):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -666,6 +685,9 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     sharpen_radius/amount/threshold: unsharp mask applied after resize, before DP.
          Pushes pixel values toward the extremes, improving Teletext palette matching.
          amount=0 disables sharpening.
+    linear: linearise source pixels from sRGB to linear light before computing
+         squared error. Corrects for gamma encoding: dark-tone differences are
+         weighted more fairly. The Teletext palette (0/255 per channel) is unchanged.
     """
     from PIL import ImageEnhance
     img = Image.open(img_path).convert('RGB')
@@ -724,7 +746,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     solver = greedy_row if greedy else dp_row
 
     def _solve_row(y7):
-        et, gt = build_error_table(arr, y7, frame_w, luma=luma)
+        et, gt = build_error_table(arr, y7, frame_w, luma=luma, linear=linear)
         return solver(et, gt, frame_w,
                       use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
 
@@ -1056,6 +1078,12 @@ def main():
                              'Much faster but lower quality, useful for quick previews.')
     parser.add_argument('--luma', action='store_true',
                         help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
+    parser.add_argument('--linear', action='store_true',
+                        help='Linearise source pixels from sRGB to linear light before computing '
+                             'squared error. Source images are gamma-encoded (~2.2); computing '
+                             'error in gamma space underweights dark-tone differences. '
+                             'The Teletext palette (all 0 or 255 per channel) is unchanged. '
+                             'Can be combined with --luma for both corrections simultaneously.')
     parser.add_argument('--filter', choices=['bilinear', 'lanczos', 'bicubic', 'nearest', 'cimg'],
                         default='bilinear',
                         help='Resampling filter for image resize (default: bilinear). '
@@ -1166,6 +1194,7 @@ def main():
         gamma=args.gamma,
         contrast=args.contrast,
         saturation=args.saturation,
+        linear=args.linear,
     )
 
     # Write binary

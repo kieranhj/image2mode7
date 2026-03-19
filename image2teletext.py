@@ -51,6 +51,11 @@ MODE7_SEP_GFX     = 154  # 0x9A
 
 SEP_FG_FACTOR = 128  # blending factor for separated graphics (0-255)
 
+# Perceptual luminance weights for RGB error (ITU-R BT.601)
+# Human vision is ~6× more sensitive to green than blue; weighting the error
+# metric accordingly makes the DP prioritise brightness accuracy over hue.
+LUMA_WEIGHTS = np.array([0.299, 0.587, 0.114], dtype=np.float32)
+
 # State is a 15-bit integer: (sep:1)(last_gfx:7)(hold:1)(bg:3)(fg:3)
 MAX_STATE = 1 << 15  # 32768
 
@@ -180,7 +185,7 @@ def best_gfx_char(img, x7, y7, fg, bg, sep):
 # Precompute per-row error lookup table (numpy vectorised)
 # ---------------------------------------------------------------------------
 
-def build_error_table(img, y7, frame_w):
+def build_error_table(img, y7, frame_w, luma=False):
     """
     Return err_table[x7_idx, fg, bg, sep, screen_char] = total squared RGB error
     for displaying screen_char (0-127) at character column x7_idx in row y7,
@@ -236,7 +241,8 @@ def build_error_table(img, y7, frame_w):
 
                 # squared error vs pixels[xi]: (frame_w, 128, 6, 3)
                 sq = (disp[None, :, :, :] - pixels[:, None, :, :]) ** 2
-                err_table[:, fg, bg, sep, :] = sq.sum(axis=(2, 3))
+                weights = LUMA_WEIGHTS if luma else np.ones(3, dtype=np.float32)
+                err_table[:, fg, bg, sep, :] = (sq * weights).sum(axis=(2, 3)).astype(np.int32)
 
                 # Best graphics char: each sub-pixel independently on or off
                 # on_err[xi, sixel] = err_table[xi, fg, bg, sep, sc] where only that bit set
@@ -562,7 +568,7 @@ def dp_row(err_table, gfx_table, frame_w,
 # Top-level conversion
 # ---------------------------------------------------------------------------
 
-def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False):
+def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -599,7 +605,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
     solver = dp_row if slow else greedy_row
 
     def _solve_row(y7):
-        et, gt = build_error_table(arr, y7, frame_w)
+        et, gt = build_error_table(arr, y7, frame_w, luma=luma)
         return solver(et, gt, frame_w,
                       use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
 
@@ -877,6 +883,8 @@ def main():
     parser.add_argument('--sep', action='store_true', help='Enable Separated Graphics mode (experimental)')
     parser.add_argument('--slow', action='store_true',
                         help='Use full DP solver (near-optimal quality, much slower)')
+    parser.add_argument('--luma', action='store_true',
+                        help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
     parser.add_argument('--ssd', metavar='DISK.SSD',
                         help='Add output to a BBC Micro DFS .ssd disk image '
                              '(80-track, created if it does not exist)')
@@ -898,6 +906,7 @@ def main():
         use_fill=not args.nofill,
         slow=args.slow,
         use_sep=args.sep,
+        luma=args.luma,
     )
 
     # Write binary

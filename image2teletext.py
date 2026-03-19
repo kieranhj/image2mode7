@@ -755,6 +755,58 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
     return arr[np.ix_(ys, xs)]
 
 
+def preprocess_image(img_path, filter='bilinear', par=1.0,
+                     sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
+                     gamma=1.0, contrast=1.0, saturation=1.0, dither=False):
+    """
+    Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
+    the same pipeline steps that precede the DP solver in convert_image.
+    Returns the processed image as a PIL Image at sub-pixel resolution (≤78×75 px).
+    Useful for previewing the effect of parameters before running the full conversion.
+    """
+    from PIL import ImageEnhance
+    img = Image.open(img_path).convert('RGB')
+    iw, ih = img.size
+
+    if gamma != 1.0:
+        arr16 = np.array(img, dtype=np.float32) / 255.0
+        arr16 = np.clip(arr16 ** (1.0 / gamma), 0.0, 1.0)
+        img = Image.fromarray((arr16 * 255.0).astype(np.uint8))
+    if contrast != 1.0:
+        img = ImageEnhance.Contrast(img).enhance(contrast)
+    if saturation != 1.0:
+        img = ImageEnhance.Color(img).enhance(saturation)
+
+    pw = MODE7_PIXEL_W
+    ph = int(round(pw * ih / iw * par))
+    if ph % 3:
+        ph += 3 - (ph % 3)
+    if ph > MODE7_PIXEL_H:
+        ph = MODE7_PIXEL_H
+        pw = int(round(ph * iw / ih / par))
+        if pw % 2:
+            pw += 1
+
+    if filter == 'cimg':
+        arr = _cimg_nearest_resize(np.array(img, dtype=np.uint8), pw, ph)
+    else:
+        img = img.resize((pw, ph), _FILTER_MAP[filter])
+        arr = np.array(img, dtype=np.uint8)
+
+    if sharpen_amount > 0:
+        from PIL.ImageFilter import UnsharpMask
+        arr = np.array(
+            Image.fromarray(arr).filter(
+                UnsharpMask(radius=sharpen_radius, percent=sharpen_amount,
+                            threshold=sharpen_threshold)),
+            dtype=np.uint8)
+
+    if dither:
+        arr = floyd_steinberg_dither(arr)
+
+    return Image.fromarray(arr)
+
+
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=False, luma=False,
                   filter='bilinear', par=1.0,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
@@ -781,48 +833,13 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
          state forward through the fixed subsequent characters) reduces the total
          tail error the substitution is accepted.  Repeats until convergence.
     """
-    from PIL import ImageEnhance
-    img = Image.open(img_path).convert('RGB')
-    iw, ih = img.size
-
-    # Tone/colour adjustments on the full-resolution source image, before resize.
-    # Applying before resize lets the filter work on correctly-toned pixels.
-    if gamma != 1.0:
-        arr16 = np.array(img, dtype=np.float32) / 255.0
-        arr16 = np.clip(arr16 ** (1.0 / gamma), 0.0, 1.0)
-        img = Image.fromarray((arr16 * 255.0).astype(np.uint8))
-    if contrast != 1.0:
-        img = ImageEnhance.Contrast(img).enhance(contrast)
-    if saturation != 1.0:
-        img = ImageEnhance.Color(img).enhance(saturation)
-
-    # Maintain aspect ratio, fit within 78x75 pixel canvas.
-    # PAR correction: sub-pixels appear `par` times wider than tall on the target display,
-    # so we multiply ph by par to pre-compress the image horizontally in sub-pixel space.
-    pw = MODE7_PIXEL_W
-    ph = int(round(pw * ih / iw * par))
-    if ph % 3:
-        ph += 3 - (ph % 3)
-    if ph > MODE7_PIXEL_H:
-        ph = MODE7_PIXEL_H
-        pw = int(round(ph * iw / ih / par))
-        if pw % 2:
-            pw += 1
-
-    if filter == 'cimg':
-        arr = _cimg_nearest_resize(np.array(img, dtype=np.uint8), pw, ph)
-    else:
-        img = img.resize((pw, ph), _FILTER_MAP[filter])
-        arr = np.array(img, dtype=np.uint8)
-
-    if sharpen_amount > 0:
-        from PIL.ImageFilter import UnsharpMask
-        sharpened = Image.fromarray(arr).filter(
-            UnsharpMask(radius=sharpen_radius, percent=sharpen_amount, threshold=sharpen_threshold))
-        arr = np.array(sharpened, dtype=np.uint8)
-
-    if dither:
-        arr = floyd_steinberg_dither(arr)
+    preprocessed = preprocess_image(
+        img_path, filter=filter, par=par,
+        sharpen_radius=sharpen_radius, sharpen_amount=sharpen_amount,
+        sharpen_threshold=sharpen_threshold,
+        gamma=gamma, contrast=contrast, saturation=saturation, dither=dither)
+    arr = np.array(preprocessed, dtype=np.uint8)
+    pw, ph = preprocessed.size
 
     frame_w = pw // 2
     frame_h = ph // 3

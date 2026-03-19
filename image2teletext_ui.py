@@ -24,7 +24,7 @@ import image2teletext as m
 # ---------------------------------------------------------------------------
 
 _PRESET_DEFAULTS = dict(
-    par=1.0, gamma=1.0, contrast=1.0, saturation=1.0,
+    par=1.2, gamma=1.0, contrast=1.0, saturation=1.0,
     sharpen_amount=0, sharpen_radius=1.0, sharpen_threshold=0,
 )
 
@@ -71,7 +71,7 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
     return img.resize(
         (img.width * _PREVIEW_SCALE, img.height * _PREVIEW_SCALE),
         resample=Image.NEAREST,
-    )
+    ), gr.update(selected="processed")
 
 # ---------------------------------------------------------------------------
 # Full conversion
@@ -119,7 +119,7 @@ def convert(image_path, par, gamma, contrast, saturation,
     tmp.write(bytes(page))
     tmp.close()
 
-    return proc_img, teletext_img, url_md, tmp.name
+    return proc_img, teletext_img, url_md, tmp.name, gr.update(selected="teletext")
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +170,8 @@ with gr.Blocks(title="image2teletext") as demo:
 
             with gr.Accordion("Display & resize", open=False):
                 par_s = gr.Slider(
-                    0.5, 2.0, value=1.0, step=0.01,
-                    label="Pixel aspect ratio  (1.0 = emulator · 1.2 = LCD TV · 1.22 = CRT)",
+                    0.5, 2.0, value=1.2, step=0.01,
+                    label="Pixel aspect ratio  (1.2 = LCD TV default · 1.0 = emulator · 1.22 = CRT)",
                 )
                 filter_dd = gr.Dropdown(
                     choices=["bilinear", "lanczos", "bicubic", "nearest", "cimg"],
@@ -199,8 +199,8 @@ with gr.Blocks(title="image2teletext") as demo:
         # ── Right column: outputs ──────────────────────────────────────────
         with gr.Column(scale=1, min_width=380):
 
-            with gr.Tabs():
-                with gr.Tab("Processed input"):
+            with gr.Tabs(selected="processed") as output_tabs:
+                with gr.Tab("Processed input", id="processed"):
                     gr.Markdown(
                         "How your image looks after tone/colour, sharpening and resize — "
                         "**before** the Teletext character solver runs.  "
@@ -212,7 +212,7 @@ with gr.Blocks(title="image2teletext") as demo:
                         type="pil",
                     )
 
-                with gr.Tab("Teletext output"):
+                with gr.Tab("Teletext output", id="teletext"):
                     teletext_out = gr.Image(
                         label="Teletext preview  (3× zoom)",
                         type="pil",
@@ -244,21 +244,21 @@ with gr.Blocks(title="image2teletext") as demo:
     preview_btn.click(
         preprocess_preview,
         inputs=_proc_inputs,
-        outputs=[processed_out],
+        outputs=[processed_out, output_tabs],
     )
 
     # ── Convert button — updates both tabs ───────────────────────────────
     convert_btn.click(
         convert,
         inputs=_conv_inputs,
-        outputs=[processed_out, teletext_out, url_out, bin_out],
+        outputs=[processed_out, teletext_out, url_out, bin_out, output_tabs],
     )
 
     # ── Auto-update processing preview on image upload ────────────────────
     image_input.change(
         preprocess_preview,
         inputs=_proc_inputs,
-        outputs=[processed_out],
+        outputs=[processed_out, output_tabs],
     )
 
 

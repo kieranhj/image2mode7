@@ -755,7 +755,7 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
     return arr[np.ix_(ys, xs)]
 
 
-def preprocess_image(img_path, filter='bilinear', par=1.0,
+def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False):
     """
@@ -808,7 +808,7 @@ def preprocess_image(img_path, filter='bilinear', par=1.0,
 
 
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=False, luma=False,
-                  filter='bilinear', par=1.0,
+                  filter='bilinear', par=1.2,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
                   dither=False, refine=False):
@@ -1232,12 +1232,12 @@ def main():
                         default='bilinear',
                         help='Resampling filter for image resize (default: bilinear). '
                              'cimg matches the left-aligned nearest-neighbour used by the C++ executable.')
-    parser.add_argument('--par', type=float, default=1.0,
+    parser.add_argument('--par', type=float, default=1.2,
                         metavar='RATIO',
                         help='Pixel aspect ratio of the target display (sub-pixel width / height). '
-                             '1.0 = square pixels (default, suits emulators with 1:1 pixel mapping). '
-                             '1.2 = modern LCD TV / recommended (matches Ceefax broadcast footage; '
-                             '480 teletext pixels * 1.2 = 576 PAL active lines). '
+                             '1.2 = modern LCD TV / recommended (default; matches Ceefax broadcast '
+                             'footage; 480 teletext pixels * 1.2 = 576 PAL active lines). '
+                             '1.0 = square pixels (suits emulators with 1:1 pixel mapping). '
                              '1.22 = CRT TV (mathematically derived: 768 / (52.6us * 6MHz * 2) = 1.22; '
                              'SAA5050 chip on a CRT with 768 square-pixel PAL width).')
     parser.add_argument('--sharpen-radius', type=float, default=1.0, metavar='R',

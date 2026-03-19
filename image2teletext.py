@@ -641,7 +641,8 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 
 
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False,
-                  filter='bilinear', quant=False, sat=64, val=64, black=64, white=128, par=1.0):
+                  filter='bilinear', quant=False, sat=64, val=64, black=64, white=128, par=1.0,
+                  sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -649,6 +650,9 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
     par: pixel aspect ratio (sub-pixel width / height on display).
          1.0 = square pixels (emulator); 1.2 = LCD TV; 1.22 = CRT TV.
          Values > 1.0 pre-compress the image horizontally so the display stretches it back correctly.
+    sharpen_radius/amount/threshold: unsharp mask applied after resize, before DP.
+         Pushes pixel values toward the extremes, improving Teletext palette matching.
+         amount=0 disables sharpening.
     """
     img = Image.open(img_path).convert('RGB')
     iw, ih = img.size
@@ -671,6 +675,12 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
     else:
         img = img.resize((pw, ph), _FILTER_MAP[filter])
         arr = np.array(img, dtype=np.uint8)
+
+    if sharpen_amount > 0:
+        from PIL.ImageFilter import UnsharpMask
+        sharpened = Image.fromarray(arr).filter(
+            UnsharpMask(radius=sharpen_radius, percent=sharpen_amount, threshold=sharpen_threshold))
+        arr = np.array(sharpened, dtype=np.uint8)
 
     if quant:
         arr = quantize_image(arr, sat=sat, val=val, black=black, white=white)
@@ -981,6 +991,26 @@ def main():
                              '480 teletext pixels * 1.2 = 576 PAL active lines). '
                              '1.22 = CRT TV (mathematically derived: 768 / (52.6us * 6MHz * 2) = 1.22; '
                              'SAA5050 chip on a CRT with 768 square-pixel PAL width).')
+    parser.add_argument('--sharpen-radius', type=float, default=1.0, metavar='R',
+                        help='Unsharp mask blur radius in pixels, applied to the resized sub-pixel '
+                             'image (default: 1.0). Controls the spatial extent of edge enhancement. '
+                             '0.5 = sub-pixel edges only; 1.0 = one-cell edges (recommended starting '
+                             'point); 2.0 = two-cell halos, good for enhancing broad colour regions. '
+                             'Values above 3.0 rarely help at Mode 7 resolution.')
+    parser.add_argument('--sharpen-amount', type=int, default=0, metavar='PCT',
+                        help='Unsharp mask strength as a percentage (default: 0 = disabled). '
+                             'Pushes pixel values toward channel extremes, reducing distance to the '
+                             'nearest Teletext palette colour before the DP solver runs. '
+                             '50-100 = subtle, good for photographic sources; '
+                             '100-200 = moderate, recommended starting point for most images; '
+                             '200-300 = strong, useful for graphics/logos with hard colour edges; '
+                             'above 500 will posterise heavily (may be intentional).')
+    parser.add_argument('--sharpen-threshold', type=int, default=0, metavar='T',
+                        help='Unsharp mask threshold: minimum per-channel difference required before '
+                             'sharpening is applied (default: 0 = sharpen everywhere, 0-255 range). '
+                             '0 = sharpen all pixels including smooth gradients and noise; '
+                             '3-10 = skip near-flat areas, avoids amplifying compression artefacts; '
+                             '10-20 = only sharpen pronounced edges, best for noisy sources.')
     parser.add_argument('--quant', action='store_true',
                         help='Pre-quantize image to Teletext 8-colour palette before conversion')
     parser.add_argument('--sat',   type=int, default=64,
@@ -1020,6 +1050,9 @@ def main():
         black=args.black,
         white=args.white,
         par=args.par,
+        sharpen_radius=args.sharpen_radius,
+        sharpen_amount=args.sharpen_amount,
+        sharpen_threshold=args.sharpen_threshold,
     )
 
     # Write binary

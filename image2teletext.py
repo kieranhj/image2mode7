@@ -641,23 +641,28 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 
 
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False,
-                  filter='bilinear', quant=False, sat=64, val=64, black=64, white=128):
+                  filter='bilinear', quant=False, sat=64, val=64, black=64, white=128, par=1.0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
     slow: use full DP solver (near-optimal quality, slower).
+    par: pixel aspect ratio (sub-pixel width / height on display).
+         1.0 = square pixels (emulator); 1.2 = LCD TV; 1.22 = CRT TV.
+         Values > 1.0 pre-compress the image horizontally so the display stretches it back correctly.
     """
     img = Image.open(img_path).convert('RGB')
     iw, ih = img.size
 
-    # Maintain aspect ratio, fit within 78x75 pixel canvas
+    # Maintain aspect ratio, fit within 78x75 pixel canvas.
+    # PAR correction: sub-pixels appear `par` times wider than tall on the target display,
+    # so we multiply ph by par to pre-compress the image horizontally in sub-pixel space.
     pw = MODE7_PIXEL_W
-    ph = pw * ih // iw
+    ph = int(round(pw * ih / iw * par))
     if ph % 3:
         ph += 3 - (ph % 3)
     if ph > MODE7_PIXEL_H:
         ph = MODE7_PIXEL_H
-        pw = ph * iw // ih
+        pw = int(round(ph * iw / ih / par))
         if pw % 2:
             pw += 1
 
@@ -968,6 +973,14 @@ def main():
                         default='bilinear',
                         help='Resampling filter for image resize (default: bilinear). '
                              'cimg matches the left-aligned nearest-neighbour used by the C++ executable.')
+    parser.add_argument('--par', type=float, default=1.0,
+                        metavar='RATIO',
+                        help='Pixel aspect ratio of the target display (sub-pixel width / height). '
+                             '1.0 = square pixels (default, suits emulators with 1:1 pixel mapping). '
+                             '1.2 = modern LCD TV / recommended (matches Ceefax broadcast footage; '
+                             '480 teletext pixels * 1.2 = 576 PAL active lines). '
+                             '1.22 = CRT TV (mathematically derived: 768 / (52.6us * 6MHz * 2) = 1.22; '
+                             'SAA5050 chip on a CRT with 768 square-pixel PAL width).')
     parser.add_argument('--quant', action='store_true',
                         help='Pre-quantize image to Teletext 8-colour palette before conversion')
     parser.add_argument('--sat',   type=int, default=64,
@@ -1006,6 +1019,7 @@ def main():
         val=args.val,
         black=args.black,
         white=args.white,
+        par=args.par,
     )
 
     # Write binary

@@ -568,7 +568,15 @@ def dp_row(err_table, gfx_table, frame_w,
 # Top-level conversion
 # ---------------------------------------------------------------------------
 
-def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False):
+_FILTER_MAP = {
+    'bilinear': Image.BILINEAR,
+    'lanczos':  Image.LANCZOS,
+    'bicubic':  Image.BICUBIC,
+    'nearest':  Image.NEAREST,
+}
+
+def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False,
+                  filter='bilinear'):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -588,7 +596,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
         if pw % 2:
             pw += 1
 
-    img = img.resize((pw, ph), Image.LANCZOS)
+    img = img.resize((pw, ph), _FILTER_MAP[filter])
     arr = np.array(img, dtype=np.uint8)
 
     frame_w = pw // 2
@@ -885,6 +893,9 @@ def main():
                         help='Use full DP solver (near-optimal quality, much slower)')
     parser.add_argument('--luma', action='store_true',
                         help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
+    parser.add_argument('--filter', choices=['bilinear', 'lanczos', 'bicubic', 'nearest'],
+                        default='bilinear',
+                        help='Resampling filter for image resize (default: bilinear)')
     parser.add_argument('--ssd', metavar='DISK.SSD',
                         help='Add output to a BBC Micro DFS .ssd disk image '
                              '(80-track, created if it does not exist)')
@@ -907,6 +918,7 @@ def main():
         slow=args.slow,
         use_sep=args.sep,
         luma=args.luma,
+        filter=args.filter,
     )
 
     # Write binary

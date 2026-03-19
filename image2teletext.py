@@ -642,7 +642,8 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 
 def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=False, luma=False,
                   filter='bilinear', quant=False, sat=64, val=64, black=64, white=128, par=1.0,
-                  sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0):
+                  sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
+                  gamma=1.0, contrast=1.0, saturation=1.0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -650,12 +651,27 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     par: pixel aspect ratio (sub-pixel width / height on display).
          1.0 = square pixels (emulator); 1.2 = LCD TV; 1.22 = CRT TV.
          Values > 1.0 pre-compress the image horizontally so the display stretches it back correctly.
+    gamma: power-law tone adjustment applied before resize. >1 brightens, <1 darkens.
+    contrast: PIL contrast enhancement factor applied before resize. >1 = more contrast.
+    saturation: PIL colour saturation factor applied before resize. >1 = more saturated.
     sharpen_radius/amount/threshold: unsharp mask applied after resize, before DP.
          Pushes pixel values toward the extremes, improving Teletext palette matching.
          amount=0 disables sharpening.
     """
+    from PIL import ImageEnhance
     img = Image.open(img_path).convert('RGB')
     iw, ih = img.size
+
+    # Tone/colour adjustments on the full-resolution source image, before resize.
+    # Applying before resize lets the filter work on correctly-toned pixels.
+    if gamma != 1.0:
+        arr16 = np.array(img, dtype=np.float32) / 255.0
+        arr16 = np.clip(arr16 ** (1.0 / gamma), 0.0, 1.0)
+        img = Image.fromarray((arr16 * 255.0).astype(np.uint8))
+    if contrast != 1.0:
+        img = ImageEnhance.Contrast(img).enhance(contrast)
+    if saturation != 1.0:
+        img = ImageEnhance.Color(img).enhance(saturation)
 
     # Maintain aspect ratio, fit within 78x75 pixel canvas.
     # PAR correction: sub-pixels appear `par` times wider than tall on the target display,
@@ -1012,6 +1028,24 @@ def main():
                              '0 = sharpen all pixels including smooth gradients and noise; '
                              '3-10 = skip near-flat areas, avoids amplifying compression artefacts; '
                              '10-20 = only sharpen pronounced edges, best for noisy sources.')
+    parser.add_argument('--gamma', type=float, default=1.0, metavar='G',
+                        help='Power-law tone adjustment applied before resize (default: 1.0 = off). '
+                             'output = (input/255)^(1/G) * 255. '
+                             '1.5-2.2 = brighten (lift shadows, good for dark or underexposed images); '
+                             '2.2 = approximates linearising a typical sRGB-encoded source; '
+                             '0.5-0.8 = darken (good for washed-out or high-key images).')
+    parser.add_argument('--contrast', type=float, default=1.0, metavar='C',
+                        help='Contrast enhancement factor applied before resize (default: 1.0 = off). '
+                             '0.0 = flat grey; 1.0 = original; '
+                             '1.2-1.5 = subtle boost, good for most images; '
+                             '1.5-2.5 = strong boost, useful for low-contrast or foggy sources; '
+                             'above 3.0 will clip highlights and shadows heavily.')
+    parser.add_argument('--saturation', type=float, default=1.0, metavar='S',
+                        help='Colour saturation factor applied before resize (default: 1.0 = off). '
+                             '0.0 = greyscale; 1.0 = original; '
+                             '1.5-2.0 = recommended for photographic sources (Teletext palette is '
+                             'fully saturated so boosting helps snap colours to the nearest entry); '
+                             '3.0+ = vivid/posterised look.')
     parser.add_argument('--quant', action='store_true',
                         help='Pre-quantize image to Teletext 8-colour palette before conversion')
     parser.add_argument('--sat',   type=int, default=64,
@@ -1054,6 +1088,9 @@ def main():
         sharpen_radius=args.sharpen_radius,
         sharpen_amount=args.sharpen_amount,
         sharpen_threshold=args.sharpen_threshold,
+        gamma=args.gamma,
+        contrast=args.contrast,
+        saturation=args.saturation,
     )
 
     # Write binary

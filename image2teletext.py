@@ -368,7 +368,7 @@ def _best_initial_colour(err_table, gfx_table):
 
 
 # ---------------------------------------------------------------------------
-# Fast greedy solver (default — 2-step lookahead)
+# Fast greedy solver (--greedy — 2-step lookahead)
 # ---------------------------------------------------------------------------
 
 def greedy_row(err_table, gfx_table, frame_w,
@@ -417,7 +417,7 @@ def greedy_row(err_table, gfx_table, frame_w,
 
 
 # ---------------------------------------------------------------------------
-# Full DP solver (--slow — near-optimal, but slow for complex images)
+# Full DP solver (default — near-optimal quality)
 # ---------------------------------------------------------------------------
 
 def dp_row(err_table, gfx_table, frame_w,
@@ -640,13 +640,13 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
     return arr[np.ix_(ys, xs)]
 
 
-def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=False, luma=False,
+def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=False, luma=False,
                   filter='bilinear', quant=False, sat=64, val=64, black=64, white=128, par=1.0,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
-    slow: use full DP solver (near-optimal quality, slower).
+    greedy: use fast greedy solver instead of the default full DP solver.
     par: pixel aspect ratio (sub-pixel width / height on display).
          1.0 = square pixels (emulator); 1.2 = LCD TV; 1.22 = CRT TV.
          Values > 1.0 pre-compress the image horizontally so the display stretches it back correctly.
@@ -688,7 +688,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
     frame_w = pw // 2
     frame_h = ph // 3
 
-    mode_str = "DP (slow)" if slow else "greedy"
+    mode_str = "greedy" if greedy else "DP"
     print(f"Image resized to {pw}x{ph} px -> {frame_w}x{frame_h} chars  [{mode_str}]",
           file=sys.stderr)
 
@@ -696,7 +696,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, slow=Fa
     for i in range(MODE7_MAX_SIZE):
         page[i] = MODE7_BLANK
 
-    solver = dp_row if slow else greedy_row
+    solver = greedy_row if greedy else dp_row
 
     def _solve_row(y7):
         et, gt = build_error_table(arr, y7, frame_w, luma=luma)
@@ -975,8 +975,9 @@ def main():
     parser.add_argument('--nohold', action='store_true', help='Disable Hold Graphics optimisation')
     parser.add_argument('--nofill', action='store_true', help='Disable New Background optimisation')
     parser.add_argument('--sep', action='store_true', help='Enable Separated Graphics mode (experimental)')
-    parser.add_argument('--slow', action='store_true',
-                        help='Use full DP solver (near-optimal quality, much slower)')
+    parser.add_argument('--greedy', action='store_true',
+                        help='Use fast greedy solver instead of the default full DP solver. '
+                             'Much faster but lower quality, useful for quick previews.')
     parser.add_argument('--luma', action='store_true',
                         help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
     parser.add_argument('--filter', choices=['bilinear', 'lanczos', 'bicubic', 'nearest', 'cimg'],
@@ -1040,7 +1041,7 @@ def main():
         input_path,
         use_hold=not args.nohold,
         use_fill=not args.nofill,
-        slow=args.slow,
+        greedy=args.greedy,
         use_sep=args.sep,
         luma=args.luma,
         filter=args.filter,

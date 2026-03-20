@@ -151,24 +151,26 @@ with gr.Blocks(title="image2teletext") as demo:
 
             preset_dd = gr.Dropdown(
                 choices=[""] + sorted(m.PRESETS.keys()),
-                value="",
+                value="tv",
                 label="Preset  (snaps sliders; you can still override)",
                 allow_custom_value=False,
             )
 
+            _tv = {**_PRESET_DEFAULTS, **m.PRESETS['tv']}
+
             with gr.Accordion("Tone & colour", open=True):
-                gamma_s      = gr.Slider(0.2, 4.0, value=1.0, step=0.05, label="Gamma  (>1 brightens)")
-                contrast_s   = gr.Slider(0.0, 4.0, value=1.0, step=0.05, label="Contrast")
-                saturation_s = gr.Slider(0.0, 5.0, value=1.0, step=0.1,  label="Saturation  (1.5-2.0 recommended)")
+                gamma_s      = gr.Slider(0.2, 4.0, value=_tv['gamma'],      step=0.05, label="Gamma  (>1 brightens)")
+                contrast_s   = gr.Slider(0.0, 4.0, value=_tv['contrast'],   step=0.05, label="Contrast")
+                saturation_s = gr.Slider(0.0, 5.0, value=_tv['saturation'], step=0.1,  label="Saturation  (1.5-2.0 recommended)")
 
             with gr.Accordion("Sharpening", open=False):
                 gr.Markdown(
                     "Unsharp mask applied after resize.  "
                     "**Amount** 0 = off.  100–200 suits photos; 300+ suits graphics."
                 )
-                sharpen_amount_s    = gr.Slider(0,   500, value=0,   step=10,  label="Amount %")
-                sharpen_radius_s    = gr.Slider(0.1, 5.0, value=1.0, step=0.1, label="Radius (px)")
-                sharpen_threshold_s = gr.Slider(0,   20,  value=0,   step=1,   label="Threshold (0 = sharpen everywhere)")
+                sharpen_amount_s    = gr.Slider(0,   500, value=_tv['sharpen_amount'],    step=10,  label="Amount %")
+                sharpen_radius_s    = gr.Slider(0.1, 5.0, value=_tv['sharpen_radius'],    step=0.1, label="Radius (px)")
+                sharpen_threshold_s = gr.Slider(0,   20,  value=_tv['sharpen_threshold'], step=1,   label="Threshold (0 = sharpen everywhere)")
 
             with gr.Accordion("Display & resize", open=False):
                 par_s = gr.Slider(
@@ -188,11 +190,12 @@ with gr.Blocks(title="image2teletext") as demo:
                 with gr.Row():
                     luma_cb   = gr.Checkbox(False, label="--luma  (perceptual error weighting)")
                     linear_cb = gr.Checkbox(False, label="--linear  (sRGB linearisation)")
-                    dither_cb = gr.Checkbox(False, label="--dither  (Floyd-Steinberg)")
                 with gr.Row():
                     nohold_cb = gr.Checkbox(False, label="--nohold")
                     nofill_cb = gr.Checkbox(False, label="--nofill")
                     sep_cb    = gr.Checkbox(False, label="--sep  (separated graphics)")
+
+            dither_cb = gr.Checkbox(True, label="Dither  (Floyd-Steinberg error diffusion)")
 
             with gr.Row():
                 preview_btn = gr.Button("Preview processing", variant="secondary")

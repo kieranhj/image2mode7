@@ -1031,7 +1031,8 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
-                     quant_colors=0, posterize=0, median=0, snap=0):
+                     quant_colors=0, posterize=0, median=0, snap=0,
+                     snap_palette=False):
     """
     Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
     the same pipeline steps that precede the DP solver in convert_image.
@@ -1088,26 +1089,56 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         arr = np.array(img, dtype=np.uint8)
 
     if quant_colors > 0:
-        # Two bugs to avoid with PIL's quantize():
-        #   1. It defaults to dither=FLOYDSTEINBERG internally, which conflicts
-        #      with our own dithering pass later — use dither=NONE here.
-        #   2. Computing the palette from the tiny resized image (~78×75 px)
-        #      gives poor results because median-cut has too little data.
-        #      Instead, compute the palette from the full-size pre-resize image,
-        #      then apply it to the resized arr.
-        # FASTOCTREE handles visually prominent minority colours (e.g. vivid
-        # blue feathers in a large green/teal background) far better than
-        # MEDIANCUT, which cuts the colour space geometrically and lets large
-        # regions drown out small but visually important ones.
-        palette_p = img_full.quantize(
-            colors=quant_colors, method=Image.Quantize.FASTOCTREE,
+        # Find a visually diverse palette from the full-size image, then
+        # apply it to the resized arr (no dithering — let our own pass handle it).
+        #
+        # Plain FASTOCTREE/MEDIANCUT on quant_colors is frequency-biased: if the
+        # background dominates (e.g. a large sky or water region), all N palette
+        # slots go to shades of the dominant colour and the subject's vivid tones
+        # are never represented.
+        #
+        # Two-pass diverse-palette approach:
+        #   1. Quantize to N*8 candidates with FASTOCTREE (more colours = better
+        #      coverage of the full colour space).
+        #   2. Greedily select N of those candidates that maximise pairwise distance
+        #      (greedy max-min / "furthest first"), ensuring the palette spans the
+        #      image's colour range rather than clustering around the majority hue.
+        candidates_n = quant_colors * 8
+        cand_p = img_full.quantize(
+            colors=candidates_n, method=Image.Quantize.FASTOCTREE,
             dither=Image.Dither.NONE)
+        cand_rgb = np.array(
+            cand_p.getpalette()[:candidates_n * 3],
+            dtype=np.float32).reshape(candidates_n, 3)
+        # Greedy furthest-first selection
+        selected = [0]
+        min_dists = np.full(candidates_n, np.inf)
+        for _ in range(quant_colors - 1):
+            d = np.sum((cand_rgb - cand_rgb[selected[-1]]) ** 2, axis=1)
+            min_dists = np.minimum(min_dists, d)
+            min_dists[selected] = -1
+            selected.append(int(np.argmax(min_dists)))
+        chosen = cand_rgb[selected].astype(np.uint8)  # (quant_colors, 3)
+        # Build a PIL P-mode palette image from the chosen colours and apply it
+        palette_data = np.zeros(768, dtype=np.uint8)
+        palette_data[:quant_colors * 3] = chosen.flatten()
+        palette_img = Image.new('P', (1, 1))
+        palette_img.putpalette(palette_data.tolist())
         arr = np.array(
             Image.fromarray(arr)
-                 .quantize(colors=quant_colors, palette=palette_p,
-                           dither=Image.Dither.NONE)
+                 .quantize(palette=palette_img, dither=Image.Dither.NONE)
                  .convert('RGB'),
             dtype=np.uint8)
+        if snap_palette:
+            # Snap each quantized colour region to its nearest Teletext colour.
+            # After quantization every pixel is one of N palette centroids, so
+            # snapping with a huge threshold maps each centroid unconditionally.
+            # The result uses only Teletext colours but with the smooth region
+            # boundaries that quantization provides — the "art palette" look.
+            arr = snap_to_palette(arr, 99999)
+    elif snap_palette:
+        # No quant step: snap every pixel to the nearest Teletext colour.
+        arr = snap_to_palette(arr, 99999)
 
     if sharpen_amount > 0:
         from PIL.ImageFilter import UnsharpMask
@@ -1131,7 +1162,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
                   dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0,
-                  smooth=0):
+                  snap_palette=False, smooth=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -1158,7 +1189,8 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         sharpen_radius=sharpen_radius, sharpen_amount=sharpen_amount,
         sharpen_threshold=sharpen_threshold,
         gamma=gamma, contrast=contrast, saturation=saturation, dither=dither,
-        quant_colors=quant_colors, posterize=posterize, median=median, snap=snap)
+        quant_colors=quant_colors, posterize=posterize, median=median, snap=snap,
+        snap_palette=snap_palette)
     arr = np.array(preprocessed, dtype=np.uint8)
     pw, ph = preprocessed.size
 
@@ -1532,6 +1564,16 @@ PRESETS = {
         sharpen_amount=100, sharpen_radius=1.0,
         par=1.2,
     ),
+    'art': dict(
+        # Teletext-art-style output: quantise to 6 dominant colours then snap
+        # each region unconditionally to the nearest Teletext colour.
+        # Produces smooth colour boundaries rather than per-pixel noise —
+        # the hallmark of hand-crafted teletext art.
+        # Pairs well with --smooth 3 for further run cleanup.
+        quant_colors=6, snap_palette=True,
+        saturation=2.0, contrast=1.4,
+        sharpen_amount=120, sharpen_radius=1.0, sharpen_threshold=3,
+    ),
     'dark': dict(
         # Dark or underexposed source images.
         # Gamma lift brightens shadows; modest contrast and saturation boost.
@@ -1659,6 +1701,12 @@ def main():
                              'Reduces ambiguous mid-tones that cause noisy dithering patterns. '
                              'Try 20–40 for a subtle effect; 60–80 clips more aggressively. '
                              'Applied after resize, quantisation and sharpening.')
+    parser.add_argument('--snap-palette', action='store_true', default=False,
+                        help='After --quant, snap every quantized colour region unconditionally to '
+                             'its nearest Teletext palette colour. Produces the "art palette" look: '
+                             'smooth region boundaries (from quantization) where each region is a '
+                             'pure Teletext colour. Without --quant, snaps all pixels regardless '
+                             'of distance. Pairs well with --quant 4–8.')
     parser.add_argument('--median', type=int, default=0, metavar='RADIUS',
                         help='Apply a median filter of (2*RADIUS+1)×(2*RADIUS+1) pixels before resize '
                              '(0 = off). Removes noise and small colour blobs while preserving hard '
@@ -1731,6 +1779,7 @@ def main():
         posterize=args.posterize,
         median=args.median,
         snap=args.snap,
+        snap_palette=args.snap_palette,
         smooth=args.smooth,
     )
 

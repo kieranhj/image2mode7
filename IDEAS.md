@@ -8,12 +8,12 @@ teletextart.co.uk.  Roughly prioritised by impact vs. effort.
 
 ## High impact
 
-### 1. Row colour-change minimisation (post-processing pass)
-The DP can flip colour every cell; human artists use 0–2 colour transitions per
+### ~~1. Row colour-change minimisation (post-processing pass)~~ ✓ DONE
+~~The DP can flip colour every cell; human artists use 0–2 colour transitions per
 row, placed at object edges.  A post-processing pass over the finished byte array
 that merges short same-colour runs (e.g. two cyan cells surrounded by yellow →
 three yellow) would eliminate the "salt-and-pepper" noise that is the most
-obvious tell of automated conversion.  No changes to the core solver needed.
+obvious tell of automated conversion.  No changes to the core solver needed.~~
 
 ### 2. Palette discipline — small palettes first
 `--quant N` already reduces colours but is treated as optional.  For a teletext-

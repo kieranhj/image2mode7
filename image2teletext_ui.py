@@ -26,7 +26,7 @@ import image2teletext as m
 _PRESET_DEFAULTS = dict(
     par=1.2, gamma=1.0, contrast=1.0, saturation=1.0,
     sharpen_amount=0, sharpen_radius=1.0, sharpen_threshold=0,
-    snap=0, quant_colors=0, posterize=0, median=0,
+    snap=0, quant_colors=0, posterize=0, median=0, snap_palette=False,
 )
 
 def _apply_preset(preset_name):
@@ -35,6 +35,7 @@ def _apply_preset(preset_name):
         p['par'], p['gamma'], p['contrast'], p['saturation'],
         p['sharpen_amount'], p['sharpen_radius'], p['sharpen_threshold'],
         p['snap'], p['quant_colors'], p['posterize'], p['median'],
+        p['snap_palette'],
     )
 
 # ---------------------------------------------------------------------------
@@ -47,7 +48,8 @@ _PREVIEW_SCALE = 8
 
 def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors, posterize, snap, median):
+                       filter_name, dither, quant_colors, posterize, snap, median,
+                       snap_palette):
     """Shared arg list used by both preprocess_preview and convert."""
     return dict(
         filter=filter_name, par=par,
@@ -60,17 +62,19 @@ def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
         posterize=int(posterize),
         snap=int(snap),
         median=int(median),
+        snap_palette=bool(snap_palette),
     )
 
 def preprocess_preview(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors, posterize, snap, median):
+                       filter_name, dither, quant_colors, posterize, snap, median,
+                       snap_palette):
     if image_path is None:
         raise gr.Error("Upload an image first.")
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize, snap, median,
+        filter_name, dither, quant_colors, posterize, snap, median, snap_palette,
     )
     img = m.preprocess_image(image_path, **kwargs)
     # Scale up so individual sub-pixels are clearly visible
@@ -86,14 +90,14 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
             filter_name, dither, quant_colors, posterize, snap, median,
-            greedy, refine, luma, linear, sep, smooth):
+            snap_palette, greedy, refine, luma, linear, sep, smooth):
     if image_path is None:
         raise gr.Error("Upload an image first.")
 
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize, snap, median,
+        filter_name, dither, quant_colors, posterize, snap, median, snap_palette,
     )
     page = m.convert_image(
         image_path,
@@ -170,6 +174,7 @@ with gr.Blocks(title="image2teletext") as demo:
                      "graphic: flat-colour logos and cartoons; "
                      "flat: bold posterised look with limited palette; "
                      "retro: authentic Ceefax style with blocky limited colours; "
+                     "art: teletext-art style — quantise to 6 colours then snap each region to Teletext; "
                      "dark: underexposed images (gamma lift); "
                      "tv: LCD TV viewing (PAR 1.2); "
                      "crt: original CRT viewing (PAR 1.22).",
@@ -201,6 +206,14 @@ with gr.Blocks(title="image2teletext") as demo:
                     info="Pre-quantise to N colours after resize. Reduces colour "
                          "complexity, producing larger flat regions and a cleaner "
                          "output. Try 8–16 for photos, 4–8 for graphics.",
+                )
+                snap_palette_cb = gr.Checkbox(False,
+                    label="Snap palette to Teletext colours",
+                    info="After quantising, map every colour region unconditionally "
+                         "to its nearest Teletext colour. Produces smooth flat regions "
+                         "in pure Teletext colours — the 'art palette' look of hand-crafted "
+                         "teletext. Best used with Palette size 4–8. "
+                         "Without a palette size set, snaps every pixel regardless of distance.",
                 )
                 posterize_s = gr.Slider(
                     0, 7, value=0, step=1,
@@ -364,7 +377,7 @@ with gr.Blocks(title="image2teletext") as demo:
     _slider_outputs = [
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
-        snap_s, quant_s, posterize_s, median_s,
+        snap_s, quant_s, posterize_s, median_s, snap_palette_cb,
     ]
     preset_dd.change(_apply_preset, inputs=[preset_dd], outputs=_slider_outputs)
 
@@ -374,6 +387,7 @@ with gr.Blocks(title="image2teletext") as demo:
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
         filter_dd, dither_cb, quant_s, posterize_s, snap_s, median_s,
+        snap_palette_cb,
     ]
 
     _conv_inputs = _proc_inputs + [

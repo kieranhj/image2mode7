@@ -954,8 +954,12 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         #      gives poor results because median-cut has too little data.
         #      Instead, compute the palette from the full-size pre-resize image,
         #      then apply it to the resized arr.
+        # FASTOCTREE handles visually prominent minority colours (e.g. vivid
+        # blue feathers in a large green/teal background) far better than
+        # MEDIANCUT, which cuts the colour space geometrically and lets large
+        # regions drown out small but visually important ones.
         palette_p = img_full.quantize(
-            colors=quant_colors, method=Image.Quantize.MEDIANCUT,
+            colors=quant_colors, method=Image.Quantize.FASTOCTREE,
             dither=Image.Dither.NONE)
         arr = np.array(
             Image.fromarray(arr)

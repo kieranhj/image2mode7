@@ -1027,16 +1027,25 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                              use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
         return row
 
+    # Centre the image in the 40×25 grid.
+    # Horizontal: colour-code col + frame_w image cols; centre the block.
+    # Vertical: offset rows so the image sits in the middle of the 25 rows.
+    col_off = (MODE7_WIDTH - (frame_w + 1)) // 2   # left edge of colour-code col
+    row_off = (MODE7_HEIGHT - frame_h) // 2
+
     num_workers = min(frame_h, os.cpu_count() or 1)
     completed = 0
     with ThreadPoolExecutor(max_workers=num_workers) as pool:
         for y7, row in enumerate(pool.map(_solve_row, range(frame_h))):
             completed += 1
             print(f"\rProcessing row {completed}/{frame_h}...", end='', file=sys.stderr)
-            for x7 in range(MODE7_WIDTH):
-                page[y7 * MODE7_WIDTH + x7] = row[x7]
-            if FRAME_FIRST_COLUMN + frame_w < MODE7_WIDTH:
-                page[y7 * MODE7_WIDTH + FRAME_FIRST_COLUMN + frame_w] = MODE7_BLACK_BG
+            base = (y7 + row_off) * MODE7_WIDTH
+            page[base + col_off] = row[0]                          # colour code
+            for xi in range(frame_w):
+                page[base + col_off + 1 + xi] = row[FRAME_FIRST_COLUMN + xi]
+            reset_col = col_off + 1 + frame_w
+            if reset_col < MODE7_WIDTH:
+                page[base + reset_col] = MODE7_BLACK_BG
 
     print(f"\rDone.                         ", file=sys.stderr)
     return page

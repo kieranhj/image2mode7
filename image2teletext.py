@@ -878,31 +878,29 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     return page
 
 # ---------------------------------------------------------------------------
-# edit.tf URL encoding
+# Teletext editor URL encoding (edit.tf / zxnet)
 # ---------------------------------------------------------------------------
 
-def to_edittf_url(page):
-    """
-    Pack 1000 bytes (7 bits each) into 875 bytes, then base64-encode,
-    producing a URL for http://edit.tf/#0:<base64>
-    """
+def _pack_page_b64(page):
+    """Pack 1000 × 7-bit bytes into a base64 string (shared by all URL encoders)."""
     data = bytes(page)
-    n = len(data)  # 1000
-
-    # Pack 8×7-bit values into 7 bytes
     packed = bytearray()
-    for i in range(0, n, 8):
+    for i in range(0, len(data), 8):
         chunk = data[i:i+8]
-        # Build a 56-bit integer from 8 × 7-bit values
         val = 0
         for b in chunk:
             val = (val << 7) | (b & 0x7F)
-        # Extract 7 bytes (8 bits each)
         for shift in range(48, -1, -8):
             packed.append((val >> shift) & 0xFF)
+    return base64.urlsafe_b64encode(packed).decode('ascii').rstrip('=')
 
-    b64 = base64.urlsafe_b64encode(packed).decode('ascii').rstrip('=')
-    return f'http://edit.tf/#0:{b64}'
+def to_edittf_url(page):
+    """Return an edit.tf URL for the page: http://edit.tf/#0:<base64>"""
+    return f'http://edit.tf/#0:{_pack_page_b64(page)}'
+
+def to_zxnet_url(page):
+    """Return a ZXNet teletext editor URL: https://zxnet.co.uk/teletext/editor/#0:<base64>"""
+    return f'https://zxnet.co.uk/teletext/editor/#0:{_pack_page_b64(page)}'
 
 # ---------------------------------------------------------------------------
 # Preview PNG rendering
@@ -1195,6 +1193,7 @@ def main():
     parser.add_argument('-o', '--output', help='Output .bin file (default: <input>.bin)')
     parser.add_argument('--preview', metavar='PNG', help='Save a preview PNG of the rendered Teletext output')
     parser.add_argument('--url', action='store_true', help='Print an edit.tf URL for the output')
+    parser.add_argument('--zxnet', action='store_true', help='Print a ZXNet teletext editor URL for the output')
     parser.add_argument('--nohold', action='store_true', help='Disable Hold Graphics optimisation')
     parser.add_argument('--nofill', action='store_true', help='Disable New Background optimisation')
     parser.add_argument('--sep', action='store_true', help='Enable Separated Graphics mode (experimental)')
@@ -1338,10 +1337,11 @@ def main():
         preview_img.save(args.preview)
         print(f'Preview saved -> {args.preview}')
 
-    # URL
+    # URLs
     if args.url:
-        url = to_edittf_url(page)
-        print(url)
+        print(to_edittf_url(page))
+    if args.zxnet:
+        print(to_zxnet_url(page))
 
     # SSD disk image
     if args.ssd:

@@ -110,9 +110,11 @@ def convert(image_path, par, gamma, contrast, saturation,
         (teletext_img.width * 3, teletext_img.height * 3), resample=Image.NEAREST
     )
 
-    # edit.tf URL
-    url = m.to_edittf_url(page)
-    url_md = f"[Open in edit.tf]({url})\n\n```\n{url}\n```"
+    # URLs
+    edittf = m.to_edittf_url(page)
+    zxnet  = m.to_zxnet_url(page)
+    url_md = (f"**edit.tf:** [{edittf}]({edittf})\n\n"
+              f"**ZXNet:** [{zxnet}]({zxnet})")
 
     # .bin download
     tmp = tempfile.NamedTemporaryFile(suffix='.bin', delete=False)

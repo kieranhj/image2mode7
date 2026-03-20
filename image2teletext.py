@@ -197,6 +197,147 @@ def best_gfx_char(img, x7, y7, fg, bg, sep):
             c |= bit
     return c
 
+def _smooth_colour_runs(row, arr, y7, frame_w, min_run,
+                        use_hold=True, use_fill=True, use_sep=False):
+    """
+    Post-process a solved Mode 7 row to merge colour runs shorter than
+    min_run cells into the dominant neighbouring colour, then re-render
+    affected cells with the new colour via best_gfx_char.
+
+    row[0]             = colour code at col_off
+    row[1..frame_w]    = character cells (FRAME_FIRST_COLUMN=1 offset)
+
+    Non-graphics, non-fg-colour control codes (MODE7_NEW_BG, MODE7_BLACK_BG,
+    MODE7_HOLD_GFX, etc.) are "immune": they are never replaced and act as
+    barriers that prevent run-merging from crossing their position.
+
+    Returns a (possibly new) row list.
+    """
+    if min_run < 2 or frame_w == 0:
+        return row
+
+    # --- 1. Simulate state, record fg/bg/sep active at each cell xi ---
+    state = pack_state(1, 0, False, MODE7_BLANK, False)
+    state = next_state(row[0], state, use_hold, use_fill, use_sep)
+
+    fg_at  = []
+    bg_at  = []
+    sep_at = []
+    for xi in range(frame_w):
+        fg, bg, _, _, sep = unpack_state(state)
+        fg_at.append(fg)
+        bg_at.append(bg)
+        sep_at.append(sep)
+        state = next_state(row[FRAME_FIRST_COLUMN + xi], state,
+                           use_hold, use_fill, use_sep)
+
+    # Mark positions whose cell is an immune control code (must not be touched).
+    # Graphics chars 32-127 and fg colour codes 145-151 can be replaced;
+    # everything else (NEW_BG=157, BLACK_BG=156, HOLD_GFX=158, …) is immune.
+    immune = [False] * frame_w
+    for xi in range(frame_w):
+        ch = row[FRAME_FIRST_COLUMN + xi]
+        immune[xi] = not (32 <= ch <= 127 or
+                          MODE7_GFX_COLOUR < ch < MODE7_GFX_COLOUR + 8)
+
+    orig_fg = fg_at[:]
+
+    # --- 2. Build run-length list [(start, end_exclusive, colour), …]
+    #        Immune cells form singleton barrier runs with sentinel colour -1.
+    _BARRIER = -1
+
+    def _make_runs(fg, imm):
+        runs, i = [], 0
+        while i < len(fg):
+            if imm[i]:
+                runs.append([i, i + 1, _BARRIER])
+                i += 1
+            else:
+                c, j = fg[i], i + 1
+                while j < len(fg) and fg[j] == c and not imm[j]:
+                    j += 1
+                runs.append([i, j, c])
+                i = j
+        return runs
+
+    runs = _make_runs(fg_at, immune)
+    if len(runs) <= 1:
+        return row
+
+    # --- 3. Iteratively merge short runs into the larger neighbour ---
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(runs)):
+            if runs[i][2] == _BARRIER:
+                continue  # immune barrier — never merge
+            rlen = runs[i][1] - runs[i][0]
+            if rlen >= min_run:
+                continue
+            if len(runs) == 1:
+                break
+            # Find the nearest non-barrier neighbours
+            left_ok  = i > 0 and runs[i - 1][2] != _BARRIER
+            right_ok = i < len(runs) - 1 and runs[i + 1][2] != _BARRIER
+            if not left_ok and not right_ok:
+                continue  # sandwiched between immune cells; can't merge
+            if not left_ok:
+                target = runs[i + 1][2]
+            elif not right_ok:
+                target = runs[i - 1][2]
+            else:
+                ll = runs[i - 1][1] - runs[i - 1][0]
+                rl = runs[i + 1][1] - runs[i + 1][0]
+                target = runs[i - 1][2] if ll >= rl else runs[i + 1][2]
+            if target != runs[i][2]:
+                for xi in range(runs[i][0], runs[i][1]):
+                    fg_at[xi] = target
+                runs[i][2] = target
+                changed = True
+        # Collapse adjacent same-colour runs (barriers are kept separate)
+        merged = [runs[0][:]]
+        for r in runs[1:]:
+            if r[2] != _BARRIER and r[2] == merged[-1][2]:
+                merged[-1][1] = r[1]
+            else:
+                merged.append(r[:])
+        runs = merged
+
+    if fg_at == orig_fg:
+        return row   # nothing changed
+
+    # --- 4. Re-encode: rebuild cells with updated colour assignments ---
+    new_row = list(row)
+    new_row[0] = MODE7_GFX_COLOUR + fg_at[0]  # update initial colour code
+    cur_fg = fg_at[0]
+
+    for xi in range(frame_w):
+        if immune[xi]:
+            # Never touch immune control codes; cur_fg is unchanged by them.
+            continue
+
+        pos      = FRAME_FIRST_COLUMN + xi
+        old_ch   = row[pos]
+        new_fg   = fg_at[xi]
+        was_ctrl = MODE7_GFX_COLOUR < old_ch < MODE7_GFX_COLOUR + 8
+
+        if new_fg != cur_fg:
+            # Colour transition needed here — insert a colour code
+            new_row[pos] = MODE7_GFX_COLOUR + new_fg
+            cur_fg = new_fg
+        elif was_ctrl:
+            # Colour code no longer needed — replace with best graphics char
+            new_row[pos] = best_gfx_char(arr, xi + FRAME_FIRST_COLUMN, y7,
+                                         new_fg, bg_at[xi], sep_at[xi])
+        elif new_fg != orig_fg[xi]:
+            # Colour changed but no code needed — re-render with new colour
+            new_row[pos] = best_gfx_char(arr, xi + FRAME_FIRST_COLUMN, y7,
+                                         new_fg, bg_at[xi], sep_at[xi])
+        # else: colour unchanged, keep original character
+
+    return new_row
+
+
 _PALETTE_NP = np.array(COLOR_RGB, dtype=np.float32)  # (8, 3)
 
 def snap_to_palette(arr, threshold):
@@ -989,7 +1130,8 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   filter='bilinear', par=1.2,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
-                  dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0):
+                  dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0,
+                  smooth=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -1054,6 +1196,10 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         for y7, row in enumerate(pool.map(_solve_row, range(frame_h))):
             completed += 1
             print(f"\rProcessing row {completed}/{frame_h}...", end='', file=sys.stderr)
+            if smooth >= 2:
+                row = _smooth_colour_runs(row, arr, y7, frame_w, smooth,
+                                         use_hold=use_hold, use_fill=use_fill,
+                                         use_sep=use_sep)
             base = (y7 + row_off) * MODE7_WIDTH
             page[base + col_off] = row[0]                          # colour code
             for xi in range(frame_w):
@@ -1499,6 +1645,14 @@ def main():
                         help='Posterise to BITS bits per channel before resize (0 = off, 1–7). '
                              '1 bit = only 0/255 per channel (8 colours); '
                              '2 bits = 4 values per channel; 3–4 suits most photos.')
+    parser.add_argument('--smooth', type=int, default=0, metavar='N',
+                        help='Merge colour runs shorter than N cells into the dominant '
+                             'neighbouring colour after solving (0 = off). '
+                             'Eliminates salt-and-pepper colour noise from automated '
+                             'conversion, where the solver switches colour for just 1–2 '
+                             'cells. Re-renders affected cells with the new colour. '
+                             'Try 2–3 for subtle cleanup; 4–6 for a bolder, more '
+                             'hand-drawn look.')
     parser.add_argument('--snap', type=int, default=0, metavar='T',
                         help='Snap pixels within Euclidean RGB distance T of a Teletext palette '
                              'colour to that colour before dithering (0 = off, 1–255). '
@@ -1577,6 +1731,7 @@ def main():
         posterize=args.posterize,
         median=args.median,
         snap=args.snap,
+        smooth=args.smooth,
     )
 
     # Write binary

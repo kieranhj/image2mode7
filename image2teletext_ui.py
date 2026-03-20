@@ -86,7 +86,7 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
             filter_name, dither, quant_colors, posterize, snap, median,
-            greedy, refine, luma, linear, sep):
+            greedy, refine, luma, linear, sep, smooth):
     if image_path is None:
         raise gr.Error("Upload an image first.")
 
@@ -99,6 +99,7 @@ def convert(image_path, par, gamma, contrast, saturation,
         image_path,
         use_hold=True, use_fill=True, use_sep=sep,
         greedy=greedy, luma=luma, linear=linear, refine=refine,
+        smooth=int(smooth),
         **kwargs,
     )
 
@@ -285,6 +286,14 @@ with gr.Blocks(title="image2teletext") as demo:
                 )
 
             with gr.Accordion("Advanced flags", open=False):
+                smooth_s = gr.Slider(
+                    0, 8, value=0, step=1,
+                    label="Colour run smoothing  (0 = off)",
+                    info="After solving, merge colour runs shorter than N cells into "
+                         "the dominant neighbouring colour and re-render. Eliminates "
+                         "the salt-and-pepper colour noise typical of automated "
+                         "conversion. 2–3 = subtle; 4–6 = bolder, more hand-drawn.",
+                )
                 with gr.Row():
                     greedy_cb = gr.Checkbox(False,
                         label="--greedy  (fast, ~4× speedup)",
@@ -368,7 +377,7 @@ with gr.Blocks(title="image2teletext") as demo:
     ]
 
     _conv_inputs = _proc_inputs + [
-        greedy_cb, refine_cb, luma_cb, linear_cb, sep_cb,
+        greedy_cb, refine_cb, luma_cb, linear_cb, sep_cb, smooth_s,
     ]
 
     # ── Preview button ────────────────────────────────────────────────────

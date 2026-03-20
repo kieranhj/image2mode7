@@ -927,6 +927,9 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         # median is a radius: size = 2*radius+1 (so 1→3×3, 2→5×5, …)
         img = img.filter(MedianFilter(size=median * 2 + 1))
 
+    # Save the full-size image before resize for palette computation (see below).
+    img_full = img
+
     pw = MODE7_PIXEL_W
     ph = int(round(pw * ih / iw * par))
     if ph % 3:
@@ -944,12 +947,20 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         arr = np.array(img, dtype=np.uint8)
 
     if quant_colors > 0:
-        # Quantise to a reduced palette after resize so flat colour regions
-        # form at the scale the DP actually sees.  Median-cut gives a good
-        # representative palette; convert back to RGB for the rest of the pipe.
+        # Two bugs to avoid with PIL's quantize():
+        #   1. It defaults to dither=FLOYDSTEINBERG internally, which conflicts
+        #      with our own dithering pass later — use dither=NONE here.
+        #   2. Computing the palette from the tiny resized image (~78×75 px)
+        #      gives poor results because median-cut has too little data.
+        #      Instead, compute the palette from the full-size pre-resize image,
+        #      then apply it to the resized arr.
+        palette_p = img_full.quantize(
+            colors=quant_colors, method=Image.Quantize.MEDIANCUT,
+            dither=Image.Dither.NONE)
         arr = np.array(
             Image.fromarray(arr)
-                 .quantize(colors=quant_colors, method=Image.Quantize.MEDIANCUT)
+                 .quantize(colors=quant_colors, palette=palette_p,
+                           dither=Image.Dither.NONE)
                  .convert('RGB'),
             dtype=np.uint8)
 

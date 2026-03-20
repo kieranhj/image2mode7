@@ -45,7 +45,7 @@ _PREVIEW_SCALE = 8
 
 def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors, posterize):
+                       filter_name, dither, quant_colors, posterize, median):
     """Shared arg list used by both preprocess_preview and convert."""
     return dict(
         filter=filter_name, par=par,
@@ -56,17 +56,18 @@ def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
         dither=dither,
         quant_colors=int(quant_colors),
         posterize=int(posterize),
+        median=int(median),
     )
 
 def preprocess_preview(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors, posterize):
+                       filter_name, dither, quant_colors, posterize, median):
     if image_path is None:
         raise gr.Error("Upload an image first.")
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize,
+        filter_name, dither, quant_colors, posterize, median,
     )
     img = m.preprocess_image(image_path, **kwargs)
     # Scale up so individual sub-pixels are clearly visible
@@ -81,7 +82,7 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
-            filter_name, dither, quant_colors, posterize,
+            filter_name, dither, quant_colors, posterize, median,
             greedy, refine, luma, linear, sep):
     if image_path is None:
         raise gr.Error("Upload an image first.")
@@ -89,7 +90,7 @@ def convert(image_path, par, gamma, contrast, saturation,
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize,
+        filter_name, dither, quant_colors, posterize, median,
     )
     page = m.convert_image(
         image_path,
@@ -190,14 +191,22 @@ with gr.Blocks(title="image2teletext") as demo:
                 contrast_s   = gr.Slider(0.0, 4.0, value=_tv['contrast'],   step=0.05, label="Contrast")
                 saturation_s = gr.Slider(0.0, 5.0, value=_tv['saturation'], step=0.1,  label="Saturation  (1.5-2.0 recommended)")
 
-            with gr.Accordion("Sharpening", open=False):
+            with gr.Accordion("Sharpening & smoothing", open=False):
                 gr.Markdown(
-                    "Unsharp mask applied after resize.  "
-                    "**Amount** 0 = off.  100–200 suits photos; 300+ suits graphics."
+                    "**Median filter** (smoothing) applied before resize.  "
+                    "**Unsharp mask** (sharpening) applied after resize — Amount 0 = off.  "
+                    "100–200 suits photos; 300+ suits graphics."
                 )
-                sharpen_amount_s    = gr.Slider(0,   500, value=_tv['sharpen_amount'],    step=10,  label="Amount %")
-                sharpen_radius_s    = gr.Slider(0.1, 5.0, value=_tv['sharpen_radius'],    step=0.1, label="Radius (px)")
-                sharpen_threshold_s = gr.Slider(0,   20,  value=_tv['sharpen_threshold'], step=1,   label="Threshold (0 = sharpen everywhere)")
+                median_s = gr.Slider(
+                    0, 7, value=0, step=1,
+                    label="Median filter radius  (0 = off · 1 = 3×3 · 2 = 5×5 · 3 = 7×7)",
+                    info="Smooths noise and small colour blobs before resize while preserving "
+                         "hard edges. Better than blur for photos with fine detail. "
+                         "Good for reducing JPEG artefacts and output speckle.",
+                )
+                sharpen_amount_s    = gr.Slider(0,   500, value=_tv['sharpen_amount'],    step=10,  label="Sharpen amount %")
+                sharpen_radius_s    = gr.Slider(0.1, 5.0, value=_tv['sharpen_radius'],    step=0.1, label="Sharpen radius (px)")
+                sharpen_threshold_s = gr.Slider(0,   20,  value=_tv['sharpen_threshold'], step=1,   label="Sharpen threshold (0 = sharpen everywhere)")
 
             with gr.Accordion("Display & resize", open=False):
                 par_s = gr.Slider(
@@ -260,7 +269,7 @@ with gr.Blocks(title="image2teletext") as demo:
         image_input,
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
-        filter_dd, dither_cb, quant_s, posterize_s,
+        filter_dd, dither_cb, quant_s, posterize_s, median_s,
     ]
 
     _conv_inputs = _proc_inputs + [
@@ -290,4 +299,4 @@ with gr.Blocks(title="image2teletext") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0")
+    demo.launch()

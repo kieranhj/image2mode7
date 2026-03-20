@@ -868,7 +868,7 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
-                     quant_colors=0, posterize=0):
+                     quant_colors=0, posterize=0, median=0):
     """
     Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
     the same pipeline steps that precede the DP solver in convert_image.
@@ -899,6 +899,11 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         arr_p = np.round(arr_p / 255.0 * (levels - 1))   # 0 .. levels-1
         arr_p = np.round(arr_p * 255.0 / (levels - 1))   # 0 .. 255
         img = Image.fromarray(arr_p.astype(np.uint8))
+
+    if median > 0:
+        from PIL.ImageFilter import MedianFilter
+        # median is a radius: size = 2*radius+1 (so 1→3×3, 2→5×5, …)
+        img = img.filter(MedianFilter(size=median * 2 + 1))
 
     pw = MODE7_PIXEL_W
     ph = int(round(pw * ih / iw * par))
@@ -944,7 +949,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   filter='bilinear', par=1.2,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
-                  dither=False, refine=False, quant_colors=0, posterize=0):
+                  dither=False, refine=False, quant_colors=0, posterize=0, median=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -971,7 +976,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         sharpen_radius=sharpen_radius, sharpen_amount=sharpen_amount,
         sharpen_threshold=sharpen_threshold,
         gamma=gamma, contrast=contrast, saturation=saturation, dither=dither,
-        quant_colors=quant_colors, posterize=posterize)
+        quant_colors=quant_colors, posterize=posterize, median=median)
     arr = np.array(preprocessed, dtype=np.uint8)
     pw, ph = preprocessed.size
 
@@ -1409,6 +1414,12 @@ def main():
                         help='Posterise to BITS bits per channel before resize (0 = off, 1–7). '
                              '1 bit = only 0/255 per channel (8 colours); '
                              '2 bits = 4 values per channel; 3–4 suits most photos.')
+    parser.add_argument('--median', type=int, default=0, metavar='RADIUS',
+                        help='Apply a median filter of (2*RADIUS+1)×(2*RADIUS+1) pixels before resize '
+                             '(0 = off). Removes noise and small colour blobs while preserving hard '
+                             'edges — better than Gaussian blur for photos. '
+                             '1 = 3×3 (gentle); 2 = 5×5; 3 = 7×7 (stronger). '
+                             'Good for reducing JPEG artefacts and speckle in the output.')
     parser.add_argument('--quant', type=int, default=0, metavar='N',
                         help='Pre-quantise to N colours after resize (0 = off). '
                              'Reduces colour complexity, producing flatter regions '
@@ -1469,6 +1480,7 @@ def main():
         refine=args.refine,
         quant_colors=args.quant,
         posterize=args.posterize,
+        median=args.median,
     )
 
     # Write binary

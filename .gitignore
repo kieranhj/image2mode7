@@ -15,3 +15,6 @@ test
 *.pdb
 *.o
 *.pyc
+.claude/settings.local.json
+/__pycache__
+/.gradio

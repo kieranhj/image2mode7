@@ -244,7 +244,12 @@ def _smooth_colour_runs(row, arr, y7, frame_w, min_run,
 
     # --- 2. Build run-length list [(start, end_exclusive, colour), …]
     #        Immune cells form singleton barrier runs with sentinel colour -1.
+    #        Runs immediately preceding a MODE7_NEW_BG barrier get sentinel -2
+    #        ("frozen") because MODE7_NEW_BG sets bg = current fg: if we change
+    #        the fg of the preceding run the background colour changes for the
+    #        rest of the row, causing visible colour bleeding.
     _BARRIER = -1
+    _FROZEN  = -2
 
     def _make_runs(fg, imm):
         runs, i = [], 0
@@ -264,23 +269,31 @@ def _smooth_colour_runs(row, arr, y7, frame_w, min_run,
     if len(runs) <= 1:
         return row
 
+    # Freeze the run immediately preceding each MODE7_NEW_BG barrier.
+    for i, r in enumerate(runs):
+        if r[2] == _BARRIER and row[FRAME_FIRST_COLUMN + r[0]] == MODE7_NEW_BG:
+            for j in range(i - 1, -1, -1):
+                if runs[j][2] not in (_BARRIER, _FROZEN):
+                    runs[j][2] = _FROZEN
+                    break
+
     # --- 3. Iteratively merge short runs into the larger neighbour ---
     changed = True
     while changed:
         changed = False
         for i in range(len(runs)):
-            if runs[i][2] == _BARRIER:
-                continue  # immune barrier — never merge
+            if runs[i][2] in (_BARRIER, _FROZEN):
+                continue  # barriers and frozen runs are never merged
             rlen = runs[i][1] - runs[i][0]
             if rlen >= min_run:
                 continue
             if len(runs) == 1:
                 break
-            # Find the nearest non-barrier neighbours
-            left_ok  = i > 0 and runs[i - 1][2] != _BARRIER
-            right_ok = i < len(runs) - 1 and runs[i + 1][2] != _BARRIER
+            # Find the nearest mergeable neighbours
+            left_ok  = i > 0 and runs[i - 1][2] not in (_BARRIER, _FROZEN)
+            right_ok = i < len(runs) - 1 and runs[i + 1][2] not in (_BARRIER, _FROZEN)
             if not left_ok and not right_ok:
-                continue  # sandwiched between immune cells; can't merge
+                continue  # sandwiched between barriers/frozen runs; can't merge
             if not left_ok:
                 target = runs[i + 1][2]
             elif not right_ok:
@@ -294,10 +307,10 @@ def _smooth_colour_runs(row, arr, y7, frame_w, min_run,
                     fg_at[xi] = target
                 runs[i][2] = target
                 changed = True
-        # Collapse adjacent same-colour runs (barriers are kept separate)
+        # Collapse adjacent same-colour runs (barriers and frozen runs stay separate)
         merged = [runs[0][:]]
         for r in runs[1:]:
-            if r[2] != _BARRIER and r[2] == merged[-1][2]:
+            if r[2] not in (_BARRIER, _FROZEN) and r[2] == merged[-1][2]:
                 merged[-1][1] = r[1]
             else:
                 merged.append(r[:])
@@ -326,9 +339,19 @@ def _smooth_colour_runs(row, arr, y7, frame_w, min_run,
             new_row[pos] = MODE7_GFX_COLOUR + new_fg
             cur_fg = new_fg
         elif was_ctrl:
-            # Colour code no longer needed — replace with best graphics char
-            new_row[pos] = best_gfx_char(arr, xi + FRAME_FIRST_COLUMN, y7,
-                                         new_fg, bg_at[xi], sep_at[xi])
+            # This fg colour code appears redundant (new_fg == cur_fg), so we
+            # would normally replace it with a graphics char.  However, if the
+            # code's own colour (what it SETS for subsequent cells) differs from
+            # cur_fg AND the next cell is immune (e.g. MODE7_NEW_BG), we cannot
+            # insert a correcting code at xi+1 — the immune cell would read the
+            # wrong fg and set the wrong background for the rest of the row.
+            # In that case keep the original code and advance cur_fg.
+            code_colour = old_ch - MODE7_GFX_COLOUR
+            if code_colour != cur_fg and xi + 1 < frame_w and immune[xi + 1]:
+                cur_fg = code_colour   # keep original code; new_row[pos] already = old_ch
+            else:
+                new_row[pos] = best_gfx_char(arr, xi + FRAME_FIRST_COLUMN, y7,
+                                             new_fg, bg_at[xi], sep_at[xi])
         elif new_fg != orig_fg[xi]:
             # Colour changed but no code needed — re-render with new colour
             new_row[pos] = best_gfx_char(arr, xi + FRAME_FIRST_COLUMN, y7,

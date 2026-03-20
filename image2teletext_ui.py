@@ -80,8 +80,7 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
             filter_name, dither,
-            greedy, refine, luma, linear,
-            nohold, nofill, sep):
+            greedy, refine, luma, linear, sep):
     if image_path is None:
         raise gr.Error("Upload an image first.")
 
@@ -92,7 +91,7 @@ def convert(image_path, par, gamma, contrast, saturation,
     )
     page = m.convert_image(
         image_path,
-        use_hold=not nohold, use_fill=not nofill, use_sep=sep,
+        use_hold=True, use_fill=True, use_sep=sep,
         greedy=greedy, luma=luma, linear=linear, refine=refine,
         **kwargs,
     )
@@ -202,8 +201,6 @@ with gr.Blocks(title="image2teletext") as demo:
                     luma_cb   = gr.Checkbox(False, label="--luma  (perceptual error weighting)")
                     linear_cb = gr.Checkbox(False, label="--linear  (sRGB linearisation)")
                 with gr.Row():
-                    nohold_cb = gr.Checkbox(False, label="--nohold")
-                    nofill_cb = gr.Checkbox(False, label="--nofill")
                     sep_cb    = gr.Checkbox(False, label="--sep  (separated graphics)")
 
             with gr.Row():
@@ -250,8 +247,7 @@ with gr.Blocks(title="image2teletext") as demo:
     ]
 
     _conv_inputs = _proc_inputs + [
-        greedy_cb, refine_cb, luma_cb, linear_cb,
-        nohold_cb, nofill_cb, sep_cb,
+        greedy_cb, refine_cb, luma_cb, linear_cb, sep_cb,
     ]
 
     # ── Preview button ────────────────────────────────────────────────────

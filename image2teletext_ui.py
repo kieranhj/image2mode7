@@ -159,6 +159,13 @@ with gr.Blocks(title="image2teletext") as demo:
                 value="tv",
                 label="Preset  (snaps sliders; you can still override)",
                 allow_custom_value=False,
+                info="Named combinations of settings for common use cases. "
+                     "tv: LCD TV viewing (PAR 1.2, photo colour); "
+                     "crt: original CRT viewing (PAR 1.22); "
+                     "photo: portraits and landscapes; "
+                     "vivid: punchy colours, strong edges; "
+                     "graphic: logos and cartoons; "
+                     "dark: underexposed images (gamma lift).",
             )
 
             dither_cb = gr.Checkbox(True,
@@ -196,9 +203,27 @@ with gr.Blocks(title="image2teletext") as demo:
                          "2 = 4 steps; 3–4 suits most photos. "
                          "Creates bold flat regions with hard edges.",
                 )
-                gamma_s      = gr.Slider(0.2, 4.0, value=_tv['gamma'],      step=0.05, label="Gamma  (>1 brightens)")
-                contrast_s   = gr.Slider(0.0, 4.0, value=_tv['contrast'],   step=0.05, label="Contrast")
-                saturation_s = gr.Slider(0.0, 5.0, value=_tv['saturation'], step=0.1,  label="Saturation  (1.5-2.0 recommended)")
+                gamma_s = gr.Slider(0.2, 4.0, value=_tv['gamma'], step=0.05,
+                    label="Gamma  (>1 brightens)",
+                    info="Power-law tone adjustment applied before resize. "
+                         "Values >1 lift shadows and brighten the image; <1 darken it. "
+                         "1.5–2.2 suits dark or underexposed photos. "
+                         "1.0 = off.",
+                )
+                contrast_s = gr.Slider(0.0, 4.0, value=_tv['contrast'], step=0.05,
+                    label="Contrast",
+                    info="Pushes darks darker and lights lighter. "
+                         "1.0 = unchanged; 1.2–1.5 suits most photos; "
+                         "higher values clip highlights and shadows. "
+                         "Applied before resize.",
+                )
+                saturation_s = gr.Slider(0.0, 5.0, value=_tv['saturation'], step=0.1,
+                    label="Saturation  (1.5-2.0 recommended)",
+                    info="The Teletext palette is fully saturated — every channel is "
+                         "either 0 or 255. Boosting saturation pushes source colours "
+                         "toward the palette, reducing dithering artefacts. "
+                         "0 = greyscale; 1.0 = unchanged; 1.5–2.0 recommended for photos.",
+                )
 
             with gr.Accordion("Sharpening & smoothing", open=False):
                 gr.Markdown(
@@ -213,30 +238,84 @@ with gr.Blocks(title="image2teletext") as demo:
                          "hard edges. Better than blur for photos with fine detail. "
                          "Good for reducing JPEG artefacts and output speckle.",
                 )
-                sharpen_amount_s    = gr.Slider(0,   500, value=_tv['sharpen_amount'],    step=10,  label="Sharpen amount %")
-                sharpen_radius_s    = gr.Slider(0.1, 5.0, value=_tv['sharpen_radius'],    step=0.1, label="Sharpen radius (px)")
-                sharpen_threshold_s = gr.Slider(0,   20,  value=_tv['sharpen_threshold'], step=1,   label="Sharpen threshold (0 = sharpen everywhere)")
+                sharpen_amount_s = gr.Slider(0, 500, value=_tv['sharpen_amount'], step=10,
+                    label="Sharpen amount %",
+                    info="Unsharp mask strength. Pushes pixel values toward channel extremes, "
+                         "improving Teletext palette matching. 0 = off; "
+                         "100–200 for photos; 300+ for graphics and logos.",
+                )
+                sharpen_radius_s = gr.Slider(0.1, 5.0, value=_tv['sharpen_radius'], step=0.1,
+                    label="Sharpen radius (px)",
+                    info="Spatial extent of the unsharp mask, in sub-pixels. "
+                         "0.5 = sub-pixel edges only; 1.0 = one character cell (recommended); "
+                         "2.0+ widens halos, useful for enhancing broad colour regions.",
+                )
+                sharpen_threshold_s = gr.Slider(0, 20, value=_tv['sharpen_threshold'], step=1,
+                    label="Sharpen threshold (0 = sharpen everywhere)",
+                    info="Minimum per-channel difference before sharpening is applied. "
+                         "0 = sharpen all pixels including smooth gradients; "
+                         "3–10 = skip near-flat areas, avoids amplifying JPEG noise; "
+                         "10–20 = pronounced edges only.",
+                )
 
             with gr.Accordion("Display & resize", open=False):
                 par_s = gr.Slider(
                     0.5, 2.0, value=1.2, step=0.01,
                     label="Pixel aspect ratio  (1.2 = LCD TV default · 1.0 = emulator · 1.22 = CRT)",
+                    info="The SAA5050 chip displays characters taller than wide on a real TV. "
+                         "Setting PAR >1 pre-squishes the image horizontally so it looks correct "
+                         "when the display stretches it back. "
+                         "1.2 = modern LCD TV (Ceefax era); 1.22 = original CRT (mathematically derived); "
+                         "1.0 = square pixels, use for emulators.",
                 )
                 filter_dd = gr.Dropdown(
                     choices=["bilinear", "lanczos", "bicubic", "nearest", "cimg"],
                     value="bilinear",
                     label="Resize filter",
+                    info="Resampling method used when scaling the image down to the sub-pixel canvas "
+                         "(78×75 px maximum). Bilinear is fast and smooth; Lanczos is sharper with "
+                         "less ringing; Bicubic is a middle ground; Nearest preserves hard pixel edges; "
+                         "CImg matches the original C++ tool's output exactly.",
                 )
 
             with gr.Accordion("Advanced flags", open=False):
                 with gr.Row():
-                    greedy_cb = gr.Checkbox(False, label="--greedy  (fast, ~4× speedup)")
-                    refine_cb = gr.Checkbox(False, label="--refine  (local search on top of DP)")
+                    greedy_cb = gr.Checkbox(False,
+                        label="--greedy  (fast, ~4× speedup)",
+                        info="Use a fast left-to-right greedy solver instead of full dynamic "
+                             "programming. Cannot look ahead, so locally optimal choices may be "
+                             "globally worse. Good for quick previews.",
+                    )
+                    refine_cb = gr.Checkbox(False,
+                        label="--refine  (local search on top of DP)",
+                        info="After the main solve, re-try every character with all valid "
+                             "alternatives. Accepts any substitution that reduces total error "
+                             "and repeats until convergence. Slow but recovers a few percent "
+                             "of quality.",
+                    )
                 with gr.Row():
-                    luma_cb   = gr.Checkbox(False, label="--luma  (perceptual error weighting)")
-                    linear_cb = gr.Checkbox(False, label="--linear  (sRGB linearisation)")
+                    luma_cb = gr.Checkbox(False,
+                        label="--luma  (perceptual error weighting)",
+                        info="Weight colour errors by ITU-R BT.601 luminance "
+                             "(0.299R + 0.587G + 0.114B). Human vision is most sensitive to "
+                             "green and least to blue, so this reduces blue fringing in favour "
+                             "of correct perceived brightness. Pairs well with --linear.",
+                    )
+                    linear_cb = gr.Checkbox(False,
+                        label="--linear  (sRGB linearisation)",
+                        info="Linearise source pixels from sRGB to linear light before computing "
+                             "squared error. Standard images are gamma-encoded (~2.2); computing "
+                             "error in gamma space underweights dark-tone differences. "
+                             "The Teletext palette (0 and 255 per channel) is unchanged.",
+                    )
                 with gr.Row():
-                    sep_cb    = gr.Checkbox(False, label="--sep  (separated graphics)")
+                    sep_cb = gr.Checkbox(False,
+                        label="--sep  (separated graphics)",
+                        info="Enable separated graphics mode. Sub-pixels have a 1-pixel gap "
+                             "between them instead of being contiguous, giving a more open "
+                             "gridded look. Uses a different SAA5050 character set variant. "
+                             "Off by default.",
+                    )
 
             with gr.Row():
                 preview_btn = gr.Button("Preview processing", variant="secondary")

@@ -867,7 +867,8 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 
 def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
-                     gamma=1.0, contrast=1.0, saturation=1.0, dither=False):
+                     gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
+                     quant_colors=0):
     """
     Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
     the same pipeline steps that precede the DP solver in convert_image.
@@ -903,6 +904,16 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         img = img.resize((pw, ph), _FILTER_MAP[filter])
         arr = np.array(img, dtype=np.uint8)
 
+    if quant_colors > 0:
+        # Quantise to a reduced palette after resize so flat colour regions
+        # form at the scale the DP actually sees.  Median-cut gives a good
+        # representative palette; convert back to RGB for the rest of the pipe.
+        arr = np.array(
+            Image.fromarray(arr)
+                 .quantize(colors=quant_colors, method=Image.Quantize.MEDIANCUT)
+                 .convert('RGB'),
+            dtype=np.uint8)
+
     if sharpen_amount > 0:
         from PIL.ImageFilter import UnsharpMask
         arr = np.array(
@@ -921,7 +932,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   filter='bilinear', par=1.2,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
-                  dither=False, refine=False):
+                  dither=False, refine=False, quant_colors=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -947,7 +958,8 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         img_path, filter=filter, par=par,
         sharpen_radius=sharpen_radius, sharpen_amount=sharpen_amount,
         sharpen_threshold=sharpen_threshold,
-        gamma=gamma, contrast=contrast, saturation=saturation, dither=dither)
+        gamma=gamma, contrast=contrast, saturation=saturation, dither=dither,
+        quant_colors=quant_colors)
     arr = np.array(preprocessed, dtype=np.uint8)
     pw, ph = preprocessed.size
 
@@ -1381,6 +1393,10 @@ def main():
                              '1.2-1.5 = subtle boost, good for most images; '
                              '1.5-2.5 = strong boost, useful for low-contrast or foggy sources; '
                              'above 3.0 will clip highlights and shadows heavily.')
+    parser.add_argument('--quant', type=int, default=0, metavar='N',
+                        help='Pre-quantise to N colours after resize (0 = off). '
+                             'Reduces colour complexity, producing flatter regions '
+                             'and a cleaner output. Try 8–32 for photos.')
     parser.add_argument('--saturation', type=float, default=1.0, metavar='S',
                         help='Colour saturation factor applied before resize (default: 1.0 = off). '
                              '0.0 = greyscale; 1.0 = original; '
@@ -1435,6 +1451,7 @@ def main():
         linear=args.linear,
         dither=args.dither,
         refine=args.refine,
+        quant_colors=args.quant,
     )
 
     # Write binary

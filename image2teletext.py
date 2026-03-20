@@ -888,8 +888,17 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
     if saturation != 1.0:
         img = ImageEnhance.Color(img).enhance(saturation)
     if posterize > 0:
-        from PIL import ImageOps
-        img = ImageOps.posterize(img, posterize)
+        # PIL's ImageOps.posterize produces values in steps of 256/2^bits
+        # (e.g. bits=1 → {0, 128}), never reaching 255.  When dithering then
+        # tries to represent 128 via the Teletext palette (channels only 0/255)
+        # it alternates between them, producing visible black speckles.
+        # Instead, quantise to 2^bits levels spaced evenly across 0–255 so the
+        # top level always maps to 255.
+        levels = 2 ** posterize
+        arr_p = np.array(img, dtype=np.float32)
+        arr_p = np.round(arr_p / 255.0 * (levels - 1))   # 0 .. levels-1
+        arr_p = np.round(arr_p * 255.0 / (levels - 1))   # 0 .. 255
+        img = Image.fromarray(arr_p.astype(np.uint8))
 
     pw = MODE7_PIXEL_W
     ph = int(round(pw * ih / iw * par))

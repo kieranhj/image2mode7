@@ -409,7 +409,10 @@ with gr.Blocks(title="image2teletext") as demo:
     )
 
     # ── Auto-update processing preview on image upload ────────────────────
-    image_input.change(
+    # Use .upload (not .change) so this only fires when an image is fully
+    # uploaded — not during the transient clear that occurs when replacing
+    # an existing image with a new one.
+    image_input.upload(
         preprocess_preview,
         inputs=_proc_inputs,
         outputs=[processed_out, output_tabs],

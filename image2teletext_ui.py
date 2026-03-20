@@ -26,6 +26,7 @@ import image2teletext as m
 _PRESET_DEFAULTS = dict(
     par=1.2, gamma=1.0, contrast=1.0, saturation=1.0,
     sharpen_amount=0, sharpen_radius=1.0, sharpen_threshold=0,
+    snap=0, quant_colors=0, posterize=0, median=0,
 )
 
 def _apply_preset(preset_name):
@@ -33,6 +34,7 @@ def _apply_preset(preset_name):
     return (
         p['par'], p['gamma'], p['contrast'], p['saturation'],
         p['sharpen_amount'], p['sharpen_radius'], p['sharpen_threshold'],
+        p['snap'], p['quant_colors'], p['posterize'], p['median'],
     )
 
 # ---------------------------------------------------------------------------
@@ -160,12 +162,16 @@ with gr.Blocks(title="image2teletext") as demo:
                 label="Preset  (snaps sliders; you can still override)",
                 allow_custom_value=False,
                 info="Named combinations of settings for common use cases. "
-                     "tv: LCD TV viewing (PAR 1.2, photo colour); "
-                     "crt: original CRT viewing (PAR 1.22); "
-                     "photo: portraits and landscapes; "
+                     "photo: balanced portraits and landscapes; "
+                     "clean: like photo but with light denoising and colour snap for less speckle; "
+                     "smooth: heavy noise reduction, best for noisy JPEGs and soft gradients; "
                      "vivid: punchy colours, strong edges; "
-                     "graphic: logos and cartoons; "
-                     "dark: underexposed images (gamma lift).",
+                     "graphic: flat-colour logos and cartoons; "
+                     "flat: bold posterised look with limited palette; "
+                     "retro: authentic Ceefax style with blocky limited colours; "
+                     "dark: underexposed images (gamma lift); "
+                     "tv: LCD TV viewing (PAR 1.2); "
+                     "crt: original CRT viewing (PAR 1.22).",
             )
 
             dither_cb = gr.Checkbox(True,
@@ -349,6 +355,7 @@ with gr.Blocks(title="image2teletext") as demo:
     _slider_outputs = [
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
+        snap_s, quant_s, posterize_s, median_s,
     ]
     preset_dd.change(_apply_preset, inputs=[preset_dd], outputs=_slider_outputs)
 

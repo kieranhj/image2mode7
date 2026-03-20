@@ -1312,6 +1312,22 @@ PRESETS = {
         saturation=1.8, contrast=1.3,
         sharpen_amount=150, sharpen_radius=1.0, sharpen_threshold=3,
     ),
+    'clean': dict(
+        # A smoother alternative to 'photo' when the result looks noisy or speckled.
+        # Light median denoising before resize + moderate colour snap to pull
+        # near-palette pixels in, reducing ambiguous mid-tones without losing edges.
+        median=1, snap=25,
+        saturation=1.8, contrast=1.3,
+        sharpen_amount=120, sharpen_radius=1.0, sharpen_threshold=5,
+    ),
+    'smooth': dict(
+        # Noise reduction emphasis: best for noisy JPEGs, soft gradients, portraits.
+        # 5×5 median removes small blobs before resize; palette pre-quantisation
+        # limits colour complexity; snap eliminates residual mid-tones.
+        median=2, snap=35, quant_colors=16,
+        saturation=1.8, contrast=1.2,
+        sharpen_amount=80, sharpen_radius=1.5, sharpen_threshold=5,
+    ),
     'vivid': dict(
         # High-impact look with punchy colours and strong edge definition.
         # Good for images that need to read clearly at a distance.
@@ -1325,6 +1341,26 @@ PRESETS = {
         # edge is enhanced.
         saturation=2.0, contrast=1.5,
         sharpen_amount=300, sharpen_radius=0.5, sharpen_threshold=0,
+    ),
+    'flat': dict(
+        # Bold, graphic style with deliberately limited colours.
+        # Posterise reduces tonal steps to hard bands; aggressive snap forces
+        # remaining mid-tones to the nearest Teletext colour; high saturation
+        # and contrast push everything toward the palette extremes.
+        # Good for logos, illustration-style images, or a punchy retro look.
+        posterize=3, snap=70,
+        saturation=2.5, contrast=1.8,
+        sharpen_amount=200, sharpen_radius=0.5, sharpen_threshold=0,
+    ),
+    'retro': dict(
+        # Mimics the limited, blocky look of real Ceefax pages.
+        # Pre-quantises to 8 colours and snaps aggressively to the Teletext
+        # palette, producing flat regions with minimal dithering noise.
+        # Less detail but very authentic.
+        quant_colors=8, snap=80,
+        saturation=2.2, contrast=1.4,
+        sharpen_amount=100, sharpen_radius=1.0,
+        par=1.2,
     ),
     'dark': dict(
         # Dark or underexposed source images.
@@ -1470,9 +1506,13 @@ def main():
     parser.add_argument('--preset', choices=sorted(PRESETS),
                         help='Named combination of options for common use cases. '
                              'Any explicit flag overrides the preset value. '
-                             'photo: portraits/landscapes (saturation+contrast boost, sharpening); '
+                             'photo: balanced portraits/landscapes; '
+                             'clean: like photo with light denoising and snap (less speckle); '
+                             'smooth: heavy noise reduction, best for noisy JPEGs; '
                              'vivid: punchy colours, strong edges; '
                              'graphic: logos/cartoons (tight sharpening, high saturation); '
+                             'flat: bold posterised look with limited palette; '
+                             'retro: authentic Ceefax style, blocky limited colours; '
                              'dark: underexposed images (gamma lift); '
                              'tv: LCD TV viewing (PAR 1.2 + photo settings); '
                              'crt: CRT TV viewing (PAR 1.22 + photo settings).')

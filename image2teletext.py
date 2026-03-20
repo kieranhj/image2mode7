@@ -197,6 +197,28 @@ def best_gfx_char(img, x7, y7, fg, bg, sep):
             c |= bit
     return c
 
+_PALETTE_NP = np.array(COLOR_RGB, dtype=np.float32)  # (8, 3)
+
+def snap_to_palette(arr, threshold):
+    """
+    Snap each pixel to the nearest Teletext palette colour if its Euclidean
+    RGB distance to that colour is within `threshold` (0–255 scale).
+    Pixels further away than the threshold are left unchanged.
+
+    Applied after resize/quant/sharpen and before dithering, so the ditherer
+    only has to handle genuinely ambiguous mid-tones.
+    """
+    flat = arr.reshape(-1, 3).astype(np.float32)          # (N, 3)
+    diffs = flat[:, np.newaxis, :] - _PALETTE_NP           # (N, 8, 3)
+    sq_dists = (diffs * diffs).sum(axis=2)                 # (N, 8)
+    nearest_idx = sq_dists.argmin(axis=1)                  # (N,)
+    nearest_sq = sq_dists[np.arange(len(flat)), nearest_idx]
+    mask = nearest_sq <= threshold * threshold             # compare in sq space
+    result = flat.copy()
+    result[mask] = _PALETTE_NP[nearest_idx[mask]]
+    return result.reshape(arr.shape).astype(np.uint8)
+
+
 def floyd_steinberg_dither(arr):
     """
     Floyd-Steinberg error diffusion dithering, quantizing to the 8-colour
@@ -868,7 +890,7 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
 def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
-                     quant_colors=0, posterize=0, median=0):
+                     quant_colors=0, posterize=0, median=0, snap=0):
     """
     Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
     the same pipeline steps that precede the DP solver in convert_image.
@@ -939,6 +961,9 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
                             threshold=sharpen_threshold)),
             dtype=np.uint8)
 
+    if snap > 0:
+        arr = snap_to_palette(arr, snap)
+
     if dither:
         arr = floyd_steinberg_dither(arr)
 
@@ -949,7 +974,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   filter='bilinear', par=1.2,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
-                  dither=False, refine=False, quant_colors=0, posterize=0, median=0):
+                  dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -976,7 +1001,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         sharpen_radius=sharpen_radius, sharpen_amount=sharpen_amount,
         sharpen_threshold=sharpen_threshold,
         gamma=gamma, contrast=contrast, saturation=saturation, dither=dither,
-        quant_colors=quant_colors, posterize=posterize, median=median)
+        quant_colors=quant_colors, posterize=posterize, median=median, snap=snap)
     arr = np.array(preprocessed, dtype=np.uint8)
     pw, ph = preprocessed.size
 
@@ -1414,6 +1439,12 @@ def main():
                         help='Posterise to BITS bits per channel before resize (0 = off, 1–7). '
                              '1 bit = only 0/255 per channel (8 colours); '
                              '2 bits = 4 values per channel; 3–4 suits most photos.')
+    parser.add_argument('--snap', type=int, default=0, metavar='T',
+                        help='Snap pixels within Euclidean RGB distance T of a Teletext palette '
+                             'colour to that colour before dithering (0 = off, 1–255). '
+                             'Reduces ambiguous mid-tones that cause noisy dithering patterns. '
+                             'Try 20–40 for a subtle effect; 60–80 clips more aggressively. '
+                             'Applied after resize, quantisation and sharpening.')
     parser.add_argument('--median', type=int, default=0, metavar='RADIUS',
                         help='Apply a median filter of (2*RADIUS+1)×(2*RADIUS+1) pixels before resize '
                              '(0 = off). Removes noise and small colour blobs while preserving hard '
@@ -1481,6 +1512,7 @@ def main():
         quant_colors=args.quant,
         posterize=args.posterize,
         median=args.median,
+        snap=args.snap,
     )
 
     # Write binary

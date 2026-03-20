@@ -45,7 +45,7 @@ _PREVIEW_SCALE = 8
 
 def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors, posterize, median):
+                       filter_name, dither, quant_colors, posterize, snap, median):
     """Shared arg list used by both preprocess_preview and convert."""
     return dict(
         filter=filter_name, par=par,
@@ -56,18 +56,19 @@ def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
         dither=dither,
         quant_colors=int(quant_colors),
         posterize=int(posterize),
+        snap=int(snap),
         median=int(median),
     )
 
 def preprocess_preview(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors, posterize, median):
+                       filter_name, dither, quant_colors, posterize, snap, median):
     if image_path is None:
         raise gr.Error("Upload an image first.")
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize, median,
+        filter_name, dither, quant_colors, posterize, snap, median,
     )
     img = m.preprocess_image(image_path, **kwargs)
     # Scale up so individual sub-pixels are clearly visible
@@ -82,7 +83,7 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
-            filter_name, dither, quant_colors, posterize, median,
+            filter_name, dither, quant_colors, posterize, snap, median,
             greedy, refine, luma, linear, sep):
     if image_path is None:
         raise gr.Error("Upload an image first.")
@@ -90,7 +91,7 @@ def convert(image_path, par, gamma, contrast, saturation,
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize, median,
+        filter_name, dither, quant_colors, posterize, snap, median,
     )
     page = m.convert_image(
         image_path,
@@ -172,6 +173,14 @@ with gr.Blocks(title="image2teletext") as demo:
             _tv = {**_PRESET_DEFAULTS, **m.PRESETS['tv']}
 
             with gr.Accordion("Tone & colour", open=True):
+                snap_s = gr.Slider(
+                    0, 128, value=0, step=1,
+                    label="Colour snap tolerance  (0 = off)",
+                    info="Snap pixels within this Euclidean RGB distance of a Teletext "
+                         "palette colour to that colour, before dithering. Reduces "
+                         "ambiguous mid-tones that cause noisy or speckled output. "
+                         "Try 20–40 for subtle snapping; 60–80 for stronger effect.",
+                )
                 quant_s = gr.Slider(
                     0, 64, value=0, step=1,
                     label="Palette size  (0 = off)",
@@ -269,7 +278,7 @@ with gr.Blocks(title="image2teletext") as demo:
         image_input,
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
-        filter_dd, dither_cb, quant_s, posterize_s, median_s,
+        filter_dd, dither_cb, quant_s, posterize_s, snap_s, median_s,
     ]
 
     _conv_inputs = _proc_inputs + [

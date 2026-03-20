@@ -45,7 +45,7 @@ _PREVIEW_SCALE = 8
 
 def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors):
+                       filter_name, dither, quant_colors, posterize):
     """Shared arg list used by both preprocess_preview and convert."""
     return dict(
         filter=filter_name, par=par,
@@ -55,17 +55,18 @@ def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
         gamma=gamma, contrast=contrast, saturation=saturation,
         dither=dither,
         quant_colors=int(quant_colors),
+        posterize=int(posterize),
     )
 
 def preprocess_preview(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
-                       filter_name, dither, quant_colors):
+                       filter_name, dither, quant_colors, posterize):
     if image_path is None:
         raise gr.Error("Upload an image first.")
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors,
+        filter_name, dither, quant_colors, posterize,
     )
     img = m.preprocess_image(image_path, **kwargs)
     # Scale up so individual sub-pixels are clearly visible
@@ -80,7 +81,7 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
-            filter_name, dither, quant_colors,
+            filter_name, dither, quant_colors, posterize,
             greedy, refine, luma, linear, sep):
     if image_path is None:
         raise gr.Error("Upload an image first.")
@@ -88,7 +89,7 @@ def convert(image_path, par, gamma, contrast, saturation,
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors,
+        filter_name, dither, quant_colors, posterize,
     )
     page = m.convert_image(
         image_path,
@@ -177,6 +178,14 @@ with gr.Blocks(title="image2teletext") as demo:
                          "complexity, producing larger flat regions and a cleaner "
                          "output. Try 8–16 for photos, 4–8 for graphics.",
                 )
+                posterize_s = gr.Slider(
+                    0, 7, value=0, step=1,
+                    label="Posterise  (0 = off, bits per channel)",
+                    info="Snap each colour channel to 2^N evenly spaced values before "
+                         "resize. 1 = only 0/255 per channel (8 colours); "
+                         "2 = 4 steps; 3–4 suits most photos. "
+                         "Creates bold flat regions with hard edges.",
+                )
                 gamma_s      = gr.Slider(0.2, 4.0, value=_tv['gamma'],      step=0.05, label="Gamma  (>1 brightens)")
                 contrast_s   = gr.Slider(0.0, 4.0, value=_tv['contrast'],   step=0.05, label="Contrast")
                 saturation_s = gr.Slider(0.0, 5.0, value=_tv['saturation'], step=0.1,  label="Saturation  (1.5-2.0 recommended)")
@@ -251,7 +260,7 @@ with gr.Blocks(title="image2teletext") as demo:
         image_input,
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
-        filter_dd, dither_cb, quant_s,
+        filter_dd, dither_cb, quant_s, posterize_s,
     ]
 
     _conv_inputs = _proc_inputs + [

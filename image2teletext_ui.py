@@ -113,15 +113,17 @@ def convert(image_path, par, gamma, contrast, saturation,
     # URLs
     edittf = m.to_edittf_url(page)
     zxnet  = m.to_zxnet_url(page)
-    url_md = (f"**edit.tf:** [{edittf}]({edittf})\n\n"
-              f"**ZXNet:** [{zxnet}]({zxnet})")
+    _btn = ("display:inline-block;padding:8px 16px;border-radius:6px;font-weight:600;"
+            "text-decoration:none;color:#fff;background:#2563eb;margin-right:8px")
+    url_html = (f'<a href="{edittf}" target="_blank" style="{_btn}">Open in edit.tf</a>'
+                f'<a href="{zxnet}"  target="_blank" style="{_btn}">Open in ZXNet</a>')
 
     # .bin download
     tmp = tempfile.NamedTemporaryFile(suffix='.bin', delete=False)
     tmp.write(bytes(page))
     tmp.close()
 
-    return proc_img, teletext_img, url_md, tmp.name, gr.update(selected="teletext")
+    return proc_img, teletext_img, url_html, tmp.name, gr.update(selected="teletext")
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +156,15 @@ with gr.Blocks(title="image2teletext") as demo:
                 value="tv",
                 label="Preset  (snaps sliders; you can still override)",
                 allow_custom_value=False,
+            )
+
+            dither_cb = gr.Checkbox(True,
+                label="Dither  (Floyd-Steinberg error diffusion)",
+                info="Quantises each sub-pixel to the nearest of the 8 Teletext colours, "
+                     "then spreads the colour error to neighbouring pixels. "
+                     "This simulates colours that aren't in the palette — e.g. orange, pink, "
+                     "or dark shades — by mixing adjacent blocks of red/yellow or "
+                     "magenta/red. Works best with natural images and higher saturation.",
             )
 
             _tv = {**_PRESET_DEFAULTS, **m.PRESETS['tv']}
@@ -195,8 +206,6 @@ with gr.Blocks(title="image2teletext") as demo:
                     nofill_cb = gr.Checkbox(False, label="--nofill")
                     sep_cb    = gr.Checkbox(False, label="--sep  (separated graphics)")
 
-            dither_cb = gr.Checkbox(True, label="Dither  (Floyd-Steinberg error diffusion)")
-
             with gr.Row():
                 preview_btn = gr.Button("Preview processing", variant="secondary")
                 convert_btn = gr.Button("Convert to Teletext", variant="primary")
@@ -222,7 +231,7 @@ with gr.Blocks(title="image2teletext") as demo:
                         label="Teletext preview  (3× zoom)",
                         type="pil",
                     )
-                    url_out = gr.Markdown()
+                    url_out = gr.HTML()
                     bin_out = gr.File(label="Download .bin  (load at &7C00 on BBC Micro)")
 
     # ── Preset → sliders ──────────────────────────────────────────────────

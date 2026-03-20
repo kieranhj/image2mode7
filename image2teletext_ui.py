@@ -349,13 +349,13 @@ with gr.Blocks(title="image2teletext") as demo:
                     )
                     processed_out = gr.Image(
                         label=f"Sub-pixel canvas ({_PREVIEW_SCALE}× zoom)",
-                        type="pil",
+                        type="pil", format="png",
                     )
 
                 with gr.Tab("Teletext output", id="teletext"):
                     teletext_out = gr.Image(
                         label="Teletext preview  (3× zoom)",
-                        type="pil",
+                        type="pil", format="png",
                     )
                     url_out = gr.HTML()
                     bin_out = gr.File(label="Download .bin  (load at &7C00 on BBC Micro)")

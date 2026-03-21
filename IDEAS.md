@@ -34,6 +34,33 @@ pass could feed per-cell weights into the error metric so that subject/backgroun
 boundary cells matter more than internal texture cells.  This preserves clean
 outlines even when internal detail is sacrificed.
 
+Implementation options (roughly ordered by complexity):
+
+- **A. Sobel edge map → per-cell weight multiplier.**  Run Sobel edge detection
+  on the preprocessed image.  For each character cell take the max gradient
+  magnitude and use it as a weight multiplier in the DP error metric (e.g. 1×
+  for flat areas, 3–5× for strong edges).  Simple, no new dependencies.
+  Downside: boosts internal edges (feather detail etc.) equally with silhouette.
+
+- **B. Background-mask boundary weighting.**  Use the binary bg/subject mask
+  already produced by `flatten_background`.  Erode it by 1–2 cells and XOR with
+  the original to extract the boundary strip; only those cells get the weight
+  boost.  Specifically targets the silhouette rather than all edges — natural
+  pairing with the bg flatten pass.
+
+- **C. Local-contrast saliency.**  For each cell compute the RMS colour
+  difference between itself and its 8 neighbours.  High-contrast cells get
+  upweighted.  No explicit edge detection, works without bg_flatten, naturally
+  finds object boundaries and strong colour transitions.
+
+- **D. GrabCut segmentation.**  Use OpenCV GrabCut (initialised with a
+  centre-biased foreground rectangle) for a clean fg/bg mask, then weight
+  boundary cells as in B.  Most accurate silhouette but requires OpenCV and a
+  second processing pass that can be slow.
+
+Recommendation: B if bg_flatten is already enabled (mask is free); A or C for
+standalone use; D is overkill for now.
+
 ---
 
 ## Medium impact

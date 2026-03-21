@@ -27,6 +27,7 @@ _PRESET_DEFAULTS = dict(
     par=1.2, gamma=1.0, contrast=1.0, saturation=1.0,
     sharpen_amount=0, sharpen_radius=1.0, sharpen_threshold=0,
     snap=0, quant_colors=0, posterize=0, median=0, snap_palette=False,
+    bg_flatten=0,
 )
 
 def _apply_preset(preset_name):
@@ -35,7 +36,7 @@ def _apply_preset(preset_name):
         p['par'], p['gamma'], p['contrast'], p['saturation'],
         p['sharpen_amount'], p['sharpen_radius'], p['sharpen_threshold'],
         p['snap'], p['quant_colors'], p['posterize'], p['median'],
-        p['snap_palette'],
+        p['snap_palette'], p['bg_flatten'],
     )
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ _PREVIEW_SCALE = 8
 def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
                        filter_name, dither, quant_colors, posterize, snap, median,
-                       snap_palette):
+                       snap_palette, bg_flatten):
     """Shared arg list used by both preprocess_preview and convert."""
     return dict(
         filter=filter_name, par=par,
@@ -63,18 +64,19 @@ def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
         snap=int(snap),
         median=int(median),
         snap_palette=bool(snap_palette),
+        bg_flatten=int(bg_flatten),
     )
 
 def preprocess_preview(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
                        filter_name, dither, quant_colors, posterize, snap, median,
-                       snap_palette):
+                       snap_palette, bg_flatten):
     if image_path is None:
         raise gr.Error("Upload an image first.")
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize, snap, median, snap_palette,
+        filter_name, dither, quant_colors, posterize, snap, median, snap_palette, bg_flatten,
     )
     img = m.preprocess_image(image_path, **kwargs)
     # Scale up so individual sub-pixels are clearly visible
@@ -90,14 +92,14 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
             filter_name, dither, quant_colors, posterize, snap, median,
-            snap_palette, greedy, refine, luma, linear, sep, smooth):
+            snap_palette, bg_flatten, greedy, refine, luma, linear, sep, smooth):
     if image_path is None:
         raise gr.Error("Upload an image first.")
 
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
-        filter_name, dither, quant_colors, posterize, snap, median, snap_palette,
+        filter_name, dither, quant_colors, posterize, snap, median, snap_palette, bg_flatten,
     )
     page = m.convert_image(
         image_path,
@@ -192,6 +194,15 @@ with gr.Blocks(title="image2teletext") as demo:
             _tv = {**_PRESET_DEFAULTS, **m.PRESETS['tv']}
 
             with gr.Accordion("Tone & colour", open=True):
+                bg_flatten_s = gr.Slider(
+                    0, 128, value=0, step=1,
+                    label="Background flatten  (0 = off)",
+                    info="Detect the dominant background colour from the image border, "
+                         "then replace all pixels within this Euclidean RGB distance of "
+                         "that colour with the nearest Teletext colour. "
+                         "40 = conservative; 60 = moderate; 80+ = aggressive. "
+                         "Works best on images with a plain, uniform background.",
+                )
                 snap_s = gr.Slider(
                     0, 128, value=0, step=1,
                     label="Colour snap tolerance  (0 = off)",
@@ -377,7 +388,7 @@ with gr.Blocks(title="image2teletext") as demo:
     _slider_outputs = [
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
-        snap_s, quant_s, posterize_s, median_s, snap_palette_cb,
+        snap_s, quant_s, posterize_s, median_s, snap_palette_cb, bg_flatten_s,
     ]
     preset_dd.change(_apply_preset, inputs=[preset_dd], outputs=_slider_outputs)
 
@@ -387,7 +398,7 @@ with gr.Blocks(title="image2teletext") as demo:
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
         filter_dd, dither_cb, quant_s, posterize_s, snap_s, median_s,
-        snap_palette_cb,
+        snap_palette_cb, bg_flatten_s,
     ]
 
     _conv_inputs = _proc_inputs + [

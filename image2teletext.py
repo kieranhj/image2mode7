@@ -21,7 +21,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 try:
     import numba as _nb
@@ -362,6 +362,68 @@ def _smooth_colour_runs(row, arr, y7, frame_w, min_run,
 
 
 _PALETTE_NP = np.array(COLOR_RGB, dtype=np.float32)  # (8, 3)
+
+
+def flatten_background(arr, threshold=60, border_frac=0.1):
+    """
+    Detect the dominant background colour by sampling the image border, then
+    replace pixels that are both (a) within `threshold` Euclidean RGB distance
+    of that colour AND (b) connected to the image border.
+
+    The connectivity requirement is the key: interior pixels that happen to share
+    the background colour (e.g. a subject's feathers matching the sky) are left
+    untouched because they cannot be reached from the edge without crossing pixels
+    that differ from the background colour.
+
+    Applied before resize so the full-resolution image provides plenty of border
+    samples and fine-grained connectivity.
+
+    Returns the modified (H, W, 3) uint8 array.
+    """
+    h, w = arr.shape[:2]
+    bh = max(1, int(h * border_frac))
+    bw = max(1, int(w * border_frac))
+    border = np.concatenate([
+        arr[:bh, :].reshape(-1, 3),
+        arr[-bh:, :].reshape(-1, 3),
+        arr[bh:-bh, :bw].reshape(-1, 3),
+        arr[bh:-bh, -bw:].reshape(-1, 3),
+    ]).astype(np.float32)
+
+    # Find the dominant colour bin (16-value quantisation to handle variation)
+    binned = (border / 16).astype(int)
+    keys = binned[:, 0] * 256 + binned[:, 1] * 16 + binned[:, 2]
+    vals, counts = np.unique(keys, return_counts=True)
+    dominant_mask = keys == vals[np.argmax(counts)]
+    bg_colour = border[dominant_mask].mean(axis=0)  # actual mean of dominant bin
+
+    # Snap the detected background to the nearest Teletext palette colour
+    dists = np.sum((_PALETTE_NP - bg_colour) ** 2, axis=1)
+    bg_teletext = _PALETTE_NP[np.argmin(dists)]
+
+    # Candidate mask: pixels within threshold of the detected bg colour
+    flat = arr.reshape(-1, 3).astype(np.float32)
+    candidate = (np.sum((flat - bg_colour) ** 2, axis=1) <= threshold ** 2).reshape(h, w)
+
+    # Find which candidate pixels are connected to the image border using a
+    # flood-fill trick: pad the candidate mask with a 1-pixel border of 255,
+    # then flood-fill from the corner through all 255-valued pixels.  Only
+    # candidate pixels reachable from the exterior get marked — interior pixels
+    # that happen to match the background colour are untouched.
+    padded = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    padded[1:h + 1, 1:w + 1] = (candidate * 255).astype(np.uint8)
+    padded[0, :] = padded[-1, :] = 255   # exterior border = seed
+    padded[:, 0] = padded[:, -1] = 255
+
+    pad_img = Image.fromarray(padded, mode='L')
+    ImageDraw.floodfill(pad_img, (0, 0), 128, thresh=0)
+
+    bg_mask = np.array(pad_img)[1:h + 1, 1:w + 1] == 128
+
+    result = arr.copy()
+    result[bg_mask] = bg_teletext.astype(np.uint8)
+    return result
+
 
 def snap_to_palette(arr, threshold):
     """
@@ -1055,7 +1117,7 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
                      quant_colors=0, posterize=0, median=0, snap=0,
-                     snap_palette=False):
+                     snap_palette=False, bg_flatten=0):
     """
     Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
     the same pipeline steps that precede the DP solver in convert_image.
@@ -1091,6 +1153,10 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         from PIL.ImageFilter import MedianFilter
         # median is a radius: size = 2*radius+1 (so 1→3×3, 2→5×5, …)
         img = img.filter(MedianFilter(size=median * 2 + 1))
+
+    if bg_flatten > 0:
+        img = Image.fromarray(
+            flatten_background(np.array(img, dtype=np.uint8), threshold=bg_flatten))
 
     # Save the full-size image before resize for palette computation (see below).
     img_full = img
@@ -1185,7 +1251,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
                   dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0,
-                  snap_palette=False, smooth=0):
+                  snap_palette=False, bg_flatten=0, smooth=0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -1213,7 +1279,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         sharpen_threshold=sharpen_threshold,
         gamma=gamma, contrast=contrast, saturation=saturation, dither=dither,
         quant_colors=quant_colors, posterize=posterize, median=median, snap=snap,
-        snap_palette=snap_palette)
+        snap_palette=snap_palette, bg_flatten=bg_flatten)
     arr = np.array(preprocessed, dtype=np.uint8)
     pw, ph = preprocessed.size
 
@@ -1588,12 +1654,12 @@ PRESETS = {
         par=1.2,
     ),
     'art': dict(
-        # Teletext-art-style output: quantise to 6 dominant colours then snap
-        # each region unconditionally to the nearest Teletext colour.
-        # Produces smooth colour boundaries rather than per-pixel noise —
-        # the hallmark of hand-crafted teletext art.
+        # Teletext-art-style output: flatten background, quantise to 6 dominant
+        # colours then snap each region unconditionally to the nearest Teletext
+        # colour.  Produces smooth colour boundaries rather than per-pixel noise
+        # — the hallmark of hand-crafted teletext art.
         # Pairs well with --smooth 3 for further run cleanup.
-        quant_colors=6, snap_palette=True,
+        bg_flatten=60, quant_colors=6, snap_palette=True,
         saturation=2.0, contrast=1.4,
         sharpen_amount=120, sharpen_radius=1.0, sharpen_threshold=3,
     ),
@@ -1730,6 +1796,13 @@ def main():
                              'smooth region boundaries (from quantization) where each region is a '
                              'pure Teletext colour. Without --quant, snaps all pixels regardless '
                              'of distance. Pairs well with --quant 4–8.')
+    parser.add_argument('--bg-flatten', type=int, default=0, metavar='T',
+                        help='Flatten background before resize (0 = off, 40–80 typical). '
+                             'Samples the image border to detect the dominant background colour, '
+                             'then replaces all pixels within Euclidean distance T of that colour '
+                             'with the nearest Teletext palette colour. '
+                             '40 = conservative; 60 = moderate (recommended); 80+ = aggressive. '
+                             'Works best for images with a plain, relatively uniform background.')
     parser.add_argument('--median', type=int, default=0, metavar='RADIUS',
                         help='Apply a median filter of (2*RADIUS+1)×(2*RADIUS+1) pixels before resize '
                              '(0 = off). Removes noise and small colour blobs while preserving hard '
@@ -1803,6 +1876,7 @@ def main():
         median=args.median,
         snap=args.snap,
         snap_palette=args.snap_palette,
+        bg_flatten=args.bg_flatten,
         smooth=args.smooth,
     )
 

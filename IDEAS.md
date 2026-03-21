@@ -15,18 +15,18 @@ that merges short same-colour runs (e.g. two cyan cells surrounded by yellow →
 three yellow) would eliminate the "salt-and-pepper" noise that is the most
 obvious tell of automated conversion.  No changes to the core solver needed.~~
 
-### 2. Palette discipline — small palettes first
-`--quant N` already reduces colours but is treated as optional.  For a teletext-
+### ~~2. Palette discipline — small palettes first~~ ✓ DONE
+~~`--quant N` already reduces colours but is treated as optional.  For a teletext-
 art look, aggressively reducing to 4–6 dominant colours *before* cell
 quantisation — and snapping each region to its nearest Teletext colour — produces
 the "deliberate colour composition" look of hand-made art.  Consider making a
-low quant value part of the default `art` preset rather than an opt-in extra.
+low quant value part of the default `art` preset rather than an opt-in extra.~~
 
-### 3. Background flattening
-Human artists almost always collapse the background to a single solid colour.
+### ~~3. Background flattening~~ ✓ DONE
+~~Human artists almost always collapse the background to a single solid colour.
 Detect the background region (largest connected area, or the dominant colour in
 the image border) and reduce it to one Teletext colour before conversion.  Even a
-crude implementation would produce a large stylistic improvement.
+crude implementation would produce a large stylistic improvement.~~
 
 ### 4. Silhouette-priority edge weighting
 The DP minimises error uniformly across the image.  A saliency or edge-detection

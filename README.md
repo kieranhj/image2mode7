@@ -1,5 +1,8 @@
 # image2mode7
 
+© 2026 Kieran Connell. Co-written with [Claude](https://claude.ai) (Anthropic).
+Based on an original algorithm by Julian Brown (aka Puppeh).
+
 Converts any image to BBC Micro **Mode 7 (Teletext)** format — a 40×25 character
 page encoded as a 1000-byte binary file compatible with the BBC Micro, emulators,
 and online Teletext editors.

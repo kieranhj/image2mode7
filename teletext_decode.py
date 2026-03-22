@@ -53,7 +53,14 @@ M7_NEW_BG        = 0x9D   # Set bg = current fg
 M7_HOLD_GFX      = 0x9E
 M7_RELEASE_GFX   = 0x9F
 
+M7_CONTIG_GFX    = 0x99   # Switch to contiguous graphics (Set-After)
+M7_SEP_GFX       = 0x9A   # Switch to separated graphics (Set-After)
+
 M7_GFX_BASE      = 0x90   # M7_GFX_BASE + colour_index = colour code
+
+# Separated graphics: foreground pixels appear as a blend of fg and bg colour
+# (SAA5050 insets each sixel by 1px on all sides; net effect ≈ 50% coverage)
+SEP_FG_FACTOR = 128   # 128/255 ≈ 50% fg, 50% bg (matches image2teletext.py)
 
 # Graphics characters in Mode 7 (SAA5050) are in the range 0x20–0x7F when in
 # graphics mode.  Bit 5 (0x20) is always set (space = all-off).  The 6 sub-pixel
@@ -289,6 +296,7 @@ def render_bytes(page_bytes, out_w=640, out_h=480):
     for row in range(N_ROWS):
         cur_fg   = 7    # white
         cur_bg   = 0    # black
+        cur_sep  = False  # contiguous graphics by default
         hold     = False
         last_gfx = 0x20  # space (all-off)
         for col in range(N_COLS):
@@ -311,20 +319,25 @@ def render_bytes(page_bytes, out_w=640, out_h=480):
                 display_byte = 0x20
                 fg_col = cur_bg
                 bg_col = cur_bg
-            elif b in (M7_NEW_BG, M7_BLACK_BG, M7_HOLD_GFX, M7_RELEASE_GFX):
-                # Other control codes: show held gfx or blank
+                disp_sep = False
+            elif b in (M7_NEW_BG, M7_BLACK_BG, M7_HOLD_GFX, M7_RELEASE_GFX,
+                       M7_SEP_GFX, M7_CONTIG_GFX):
+                # Control codes: show held gfx or blank
                 display_byte = last_gfx if hold else 0x20
                 fg_col = cur_fg
                 bg_col = cur_bg
+                disp_sep = cur_sep
             elif is_gfx_byte(b):
                 display_byte = b
                 fg_col = cur_fg
                 bg_col = cur_bg
+                disp_sep = cur_sep
             else:
                 # Unknown / alpha character — show as background
                 display_byte = last_gfx if hold else 0x20
                 fg_col = cur_fg
                 bg_col = cur_bg
+                disp_sep = cur_sep
 
             # --- Paint the 6 sub-pixels ---
             for sr in range(3):
@@ -332,7 +345,14 @@ def render_bytes(page_bytes, out_w=640, out_h=480):
                     sixel_idx = sr * 2 + sc
                     mask = GFX_PIXEL_BITS[sixel_idx]
                     is_set = bool(display_byte & mask)
-                    colour = PALETTE_RGB[fg_col if is_set else bg_col].astype(np.uint8)
+                    if is_set and disp_sep:
+                        # Separated mode: blend fg with bg (≈50% coverage)
+                        f = SEP_FG_FACTOR
+                        fg_rgb = PALETTE_RGB[fg_col]
+                        bg_rgb = PALETTE_RGB[bg_col]
+                        colour = ((f * fg_rgb + (255 - f) * bg_rgb) / 255).astype(np.uint8)
+                    else:
+                        colour = PALETTE_RGB[fg_col if is_set else bg_col].astype(np.uint8)
                     sp_r = row * 3 + sr
                     sp_c = col * 2 + sc
                     py0 = int(round(sp_r * px_per_sp_row))
@@ -344,6 +364,10 @@ def render_bytes(page_bytes, out_w=640, out_h=480):
             # --- Set-After control codes (take effect from next cell) ---
             if 0x91 <= b <= 0x97:
                 cur_fg = b - 0x90
+            if b == M7_SEP_GFX:
+                cur_sep = True
+            elif b == M7_CONTIG_GFX:
+                cur_sep = False
             if is_gfx_byte(b):
                 last_gfx = b
 

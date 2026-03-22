@@ -58,10 +58,15 @@ loss on images with solid non-black backgrounds.
 **Example:** `f2baa0_0effd30874424f558cea7c7392ec4587~mv2.png` (91.8% match) — red
 background extends to left edge in original; converter shows black col-0 cell.
 
-**Fix direction:** Implement hold-graphics support (`MODE7_HOLD_GFX`). With hold
-active, the colour-code cell at col 0 displays the last-held graphics character
-instead of background. If the previous row's last character was a solid-bg char,
-and bg=red, the held character would also appear red — matching the original.
+**Revised understanding:** Per the Teletext specification all control-code state
+resets at the start of every row — hold graphics included. There is therefore no
+valid mechanism to make col 0 display anything other than the initial background.
+The converter output is correct. The gallery artists most likely cropped the
+exported PNG to remove the leftmost black strip before uploading, which is why the
+original appears to have colour extending to x=0.
+
+**Action:** No fix needed in the converter. The test harness could optionally skip
+col 0 when computing match scores to avoid penalising correct behaviour.
 
 ---
 
@@ -133,7 +138,7 @@ Not a converter bug per se, but a documentation/usability gap.
 | # | Issue | Impact | Fix Complexity |
 |---|-------|--------|----------------|
 | 1 | Alphanumeric characters not supported | Very high | High |
-| 2 | Left-edge colour-code cell shows as black | Medium | Medium (hold gfx) |
+| 2 | Left-edge strip — gallery images are cropped; converter is correct | Test artefact | Skip col 0 in test |
 | 3 | Separated graphics not auto-detected | Medium | Medium |
 | 4 | Sub-pixel sampling offset from resize | Low-Medium | Low |
 | 5 | ~~Hold graphics not emitted~~ — NOT A BUG, already implemented | — | — |

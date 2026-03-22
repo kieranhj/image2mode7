@@ -74,20 +74,30 @@ with `make_gallery_html.py`. **Fixed in test_gallery.py (March 2026).**
 
 ---
 
-## Bug 3 — Separated graphics not auto-detected (MEDIUM IMPACT)
+## Bug 3 — Separated graphics not auto-detected (LOW IMPACT after fix)
 
 **Description:** The `--sep` flag enables separated graphics mode globally. Many
 gallery artworks mix separated and contiguous graphics within the same image —
 using separated blocks for texture/shadow and contiguous for solid fills. The
 converter applies one mode uniformly.
 
-**Effect:** Images whose artist used separated graphics for backgrounds, hair,
-foliage, or shadow fringing are reproduced with solid contiguous blocks instead,
-losing the characteristic texture. Typically 5–15% match loss.
+**Effect (revised):** With `direct_sample=True` and `snap_palette=True`, all pixel
+colours are snapped to pure palette values before the DP runs.  Separated graphics
+rendered as a 50% fg/bg blend round to roughly the same palette colour as the pure
+fg, so the comparison metric can't distinguish them.  In practice, enabling
+`--sep` on the 20 worst-scoring gallery images improves scores by 0.0–1.1%,
+not the 5–15% originally estimated.  The effect is visible in the preview but
+not in the sub-pixel metric.
 
-**Fix direction:** Per-cell local-variance detection (IDEAS.md #5): cells with high
-colour variance → separated mode; low variance → contiguous. Requires the solver to
-try both modes per cell and pick the lower-error option.
+**Fix (partial):** `--sep` already allows the DP to choose sep/contiguous
+automatically per row section — it emits `SEP_GFX` only where error is reduced.
+Additionally, `teletext_decode.render_bytes` now correctly renders separated
+graphics (was silently treating them as contiguous). **Fixed in teletext_decode.py
+(March 2026).**
+
+**Remaining:** No further algorithmic change needed for the gallery metric.  For
+real photographic sources (not palette-quantised), enabling `--sep` may improve
+texture rendering; recommend trying it with `--smooth 2`.
 
 ---
 
@@ -168,7 +178,7 @@ to handle 0x20–0x3F and 0x60–0x7F; rewrote `render_bytes` to use `GFX_PIXEL_
 |---|-------|--------|----------------|
 | 1 | Alphanumeric characters not supported | Very high | High |
 | 2 | Left-edge strip — gallery images are cropped; converter is correct | Test artefact | Fixed in test_gallery.py |
-| 3 | Separated graphics not auto-detected | Medium | Medium |
+| 3 | Separated graphics — render_bytes fix + impact reassessed | Low (was Medium) | Fixed in teletext_decode.py |
 | 4 | ~~Sub-pixel sampling offset from resize~~ — FIXED via `--direct-sample` | Was Low-Medium | Fixed |
 | 5 | ~~Hold graphics not emitted~~ — NOT A BUG, already implemented | — | — |
 | 6 | PAR must be computed per gallery image | Operational | Low (documented) |

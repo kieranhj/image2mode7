@@ -106,21 +106,12 @@ rather than relying on PIL resize.
 
 ---
 
-## Bug 5 — Hold graphics control-code cell reconstruction (LOW IMPACT)
+## Bug 5 — ~~Hold graphics not emitted~~ NOT A BUG
 
-**Description:** When `MODE7_HOLD_GFX` (0x9E) is active, control-code cells
-display the last graphics character rather than the background. Some artists use
-this to make mid-row colour transitions appear seamless (the colour-code cell
-visually continues the previous graphics character). The converter never emits
-`MODE7_HOLD_GFX` or `MODE7_RELEASE_GFX`, so it cannot reproduce this effect.
-
-**Effect:** Mid-row colour transitions have a 1-cell-wide background-coloured gap
-in converter output where the original is seamless. Mainly affects images with
-dense multi-colour rows.
-
-**Fix direction:** IDEAS.md #6 — held graphics at colour transitions. Add HOLD_GFX
-to the DP state and allow it to be emitted when the hold-character matches the
-error budget.
+**Note:** The converter already emits `MODE7_HOLD_GFX` (0x9E) and `MODE7_RELEASE_GFX`
+(0x9F). Both are full candidates in the DP solver, the Set-At behaviour is correctly
+modelled in the error table, and `--nohold` disables the optimisation. Hold graphics
+is therefore fully supported. Removing from the bug list.
 
 ---
 
@@ -145,5 +136,5 @@ Not a converter bug per se, but a documentation/usability gap.
 | 2 | Left-edge colour-code cell shows as black | Medium | Medium (hold gfx) |
 | 3 | Separated graphics not auto-detected | Medium | Medium |
 | 4 | Sub-pixel sampling offset from resize | Low-Medium | Low |
-| 5 | Hold graphics not emitted | Low | Medium |
+| 5 | ~~Hold graphics not emitted~~ — NOT A BUG, already implemented | — | — |
 | 6 | PAR must be computed per gallery image | Operational | Low (documented) |

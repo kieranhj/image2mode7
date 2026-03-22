@@ -1,8 +1,9 @@
 """Download all gallery images from gallery_urls.txt with polite rate limiting."""
 import time, urllib.request, pathlib, sys, os
 
-URLS_FILE = 'gallery_urls.txt'
-OUT_DIR   = pathlib.Path('test/horsenburger')
+_HERE     = pathlib.Path(__file__).parent
+URLS_FILE = _HERE / 'gallery_urls.txt'
+OUT_DIR   = _HERE.parent / 'test/horsenburger'
 DELAY     = 0.2   # seconds between requests
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)

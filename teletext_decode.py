@@ -55,38 +55,41 @@ M7_RELEASE_GFX   = 0x9F
 
 M7_GFX_BASE      = 0x90   # M7_GFX_BASE + colour_index = colour code
 
-# Graphics character: 0xA0–0xBF (contiguous), 0xE0–0xFF (contiguous)
-#   bit pattern: bits 0–5 map to the 6 sub-pixels
-#   (bit layout: [top-left, top-right, mid-left, mid-right, bot-left, bot-right])
-#   Bit 6 is always set (0xA0 base), except the 0x60–0x7F range which is text.
-#   Separated graphics: 0xA0–0xBF → same pattern, drawn with gaps.
+# Graphics characters in Mode 7 (SAA5050) are in the range 0x20–0x7F when in
+# graphics mode.  Bit 5 (0x20) is always set (space = all-off).  The 6 sub-pixel
+# bits are packed into bits [0,1,2,3,4,6] of the byte (bit 5 is the 0x20 base):
+#
+#   byte = 0x20 | (pattern & 0x1F) | ((pattern & 0x20) << 1)
+#
+# Valid graphics bytes: 0x20–0x3F (bit6=0) and 0x60–0x7F (bit6=1).
+# Sub-pixel bit order: bit0=top-left, bit1=top-right, bit2=mid-left,
+#                      bit3=mid-right, bit4=bot-left, bit5=bot-right.
 
-# Map 6-bit pattern to the Mode 7 contiguous-graphics byte value.
-# Bits: b0=top-left, b1=top-right, b2=mid-left, b3=mid-right, b4=bot-left, b5=bot-right
-# The Mode 7 encoding is NOT straightforward — the chip uses a non-linear mapping
-# of the 6 bits into the character byte.
-#
-# Mode 7 gfx chars: 0xA0 (all bg = 0 bits) to 0xBF (all fg = 0b011111 = 31 bits set, skip bit6)
-# then 0xE0-0xFF for chars with bit 6 set of the 6-bit pattern.
-#
-# Actually the mapping is:
-#   char_byte = 0xA0 | (pattern & 0x1F) | ((pattern & 0x20) << 1)
-# i.e. bit5 of pattern → bit6 of byte, bits 0-4 unchanged.
+# Bit masks for the 6 sub-pixels within the graphics byte (matches GFX_PIXEL_BITS
+# in image2teletext.py: [1, 2, 4, 8, 16, 64]).
+GFX_PIXEL_BITS = [1, 2, 4, 8, 16, 64]
+
 
 def pattern_to_gfx_byte(pattern6):
     """Convert 6-bit sub-pixel pattern to Mode 7 graphics character byte."""
     low5 = pattern6 & 0x1F
     bit5 = (pattern6 >> 5) & 1
-    return 0xA0 | low5 | (bit5 << 6)
+    return 0x20 | low5 | (bit5 << 6)
 
 
 def gfx_byte_to_pattern(byte):
-    """Convert Mode 7 graphics character byte to 6-bit sub-pixel pattern."""
-    if not (0xA0 <= byte <= 0xBF or 0xE0 <= byte <= 0xFF):
+    """Convert Mode 7 graphics character byte to 6-bit sub-pixel pattern.
+    Returns None for non-graphics bytes."""
+    if not (0x20 <= byte <= 0x3F or 0x60 <= byte <= 0x7F):
         return None
     low5 = byte & 0x1F
     bit5 = (byte >> 6) & 1
     return low5 | (bit5 << 5)
+
+
+def is_gfx_byte(byte):
+    """Return True if byte is a valid Mode 7 graphics character."""
+    return 0x20 <= byte <= 0x3F or 0x60 <= byte <= 0x7F
 
 
 # ---------------------------------------------------------------------------
@@ -284,41 +287,52 @@ def render_bytes(page_bytes, out_w=640, out_h=480):
     out = np.zeros((out_h, out_w, 3), dtype=np.uint8)
 
     for row in range(N_ROWS):
-        cur_fg = 7
-        cur_bg = 0
+        cur_fg   = 7    # white
+        cur_bg   = 0    # black
+        hold     = False
+        last_gfx = 0x20  # space (all-off)
         for col in range(N_COLS):
             b = page_bytes[row * N_COLS + col]
 
-            if 0x91 <= b <= 0x97:
-                cur_fg = b - 0x90
-                fg_col = cur_bg   # control code cell shows bg
-                bg_col = cur_bg
-                pat = 0
-            elif b == M7_NEW_BG:
+            # --- Set-At control codes (take effect at this cell) ---
+            if b == M7_NEW_BG:
                 cur_bg = cur_fg
-                fg_col = cur_bg
-                bg_col = cur_bg
-                pat = 0
             elif b == M7_BLACK_BG:
                 cur_bg = 0
+            elif b == M7_HOLD_GFX:
+                hold = True
+            elif b == M7_RELEASE_GFX:
+                hold = False
+                last_gfx = 0x20
+
+            # --- Determine what is displayed at this cell ---
+            if 0x91 <= b <= 0x97:
+                # Graphics colour control: shows bg colour (control cell)
+                display_byte = 0x20
                 fg_col = cur_bg
                 bg_col = cur_bg
-                pat = 0
-            elif 0xA0 <= b <= 0xBF or 0xE0 <= b <= 0xFF:
-                pat    = gfx_byte_to_pattern(b)
+            elif b in (M7_NEW_BG, M7_BLACK_BG, M7_HOLD_GFX, M7_RELEASE_GFX):
+                # Other control codes: show held gfx or blank
+                display_byte = last_gfx if hold else 0x20
+                fg_col = cur_fg
+                bg_col = cur_bg
+            elif is_gfx_byte(b):
+                display_byte = b
                 fg_col = cur_fg
                 bg_col = cur_bg
             else:
-                # Space or alpha character — show as background
-                pat    = 0
-                fg_col = cur_bg
+                # Unknown / alpha character — show as background
+                display_byte = last_gfx if hold else 0x20
+                fg_col = cur_fg
                 bg_col = cur_bg
 
-            # Paint the 6 sub-pixels into the output image
+            # --- Paint the 6 sub-pixels ---
             for sr in range(3):
                 for sc in range(2):
-                    bit = sr * 2 + sc
-                    colour = PALETTE_RGB[fg_col if (pat >> bit) & 1 else bg_col].astype(np.uint8)
+                    sixel_idx = sr * 2 + sc
+                    mask = GFX_PIXEL_BITS[sixel_idx]
+                    is_set = bool(display_byte & mask)
+                    colour = PALETTE_RGB[fg_col if is_set else bg_col].astype(np.uint8)
                     sp_r = row * 3 + sr
                     sp_c = col * 2 + sc
                     py0 = int(round(sp_r * px_per_sp_row))
@@ -326,6 +340,12 @@ def render_bytes(page_bytes, out_w=640, out_h=480):
                     px0 = int(round(sp_c * px_per_sp_col))
                     px1 = int(round((sp_c + 1) * px_per_sp_col))
                     out[py0:py1, px0:px1] = colour
+
+            # --- Set-After control codes (take effect from next cell) ---
+            if 0x91 <= b <= 0x97:
+                cur_fg = b - 0x90
+            if is_gfx_byte(b):
+                last_gfx = b
 
     return Image.fromarray(out)
 

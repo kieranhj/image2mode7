@@ -1117,16 +1117,42 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
                      quant_colors=0, posterize=0, median=0, snap=0,
-                     snap_palette=False, bg_flatten=0):
+                     snap_palette=False, bg_flatten=0, direct_sample=False):
     """
     Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
     the same pipeline steps that precede the DP solver in convert_image.
     Returns the processed image as a PIL Image at sub-pixel resolution (≤78×75 px).
     Useful for previewing the effect of parameters before running the full conversion.
+
+    direct_sample: if True, bypass bilinear resize.  Instead, quantise the source
+        image to the 8-colour palette at full resolution, then centre-sample it at
+        the exact 78×75 sub-pixel grid positions used by the DP solver.  This
+        preserves fine patterns (e.g. separated graphics) that bilinear resize blurs
+        into grey.  Ideal for images that are already Teletext renders.
     """
     from PIL import ImageEnhance
     img = Image.open(img_path).convert('RGB')
     iw, ih = img.size
+
+    if direct_sample:
+        # Quantise every source pixel to its nearest Teletext palette colour,
+        # then point-sample the quantised image at the 78×75 sub-pixel centres.
+        # SP_COLS=80 across iw pixels; col x in the 78-wide DP grid maps to
+        # sp_col = x+2 (because FRAME_FIRST_COLUMN=1 offsets content by 1 char=2sp).
+        src = np.array(img, dtype=np.float32)
+        flat = src.reshape(-1, 3)
+        dists = np.sum((flat[:, None, :] - _PALETTE_NP[None, :, :]) ** 2, axis=2)
+        cmap = np.argmin(dists, axis=1).reshape(ih, iw).astype(np.uint8)
+        out = np.zeros((MODE7_PIXEL_H, MODE7_PIXEL_W, 3), dtype=np.uint8)
+        sp_cols = MODE7_WIDTH * 2   # 80
+        sp_rows = MODE7_PIXEL_H     # 75
+        for y in range(sp_rows):
+            cy = min(int(round((y + 0.5) * ih / sp_rows)), ih - 1)
+            for x in range(MODE7_PIXEL_W):
+                sp_col = x + 2  # account for FRAME_FIRST_COLUMN=1
+                cx = min(int(round((sp_col + 0.5) * iw / sp_cols)), iw - 1)
+                out[y, x] = COLOR_RGB[cmap[cy, cx]]
+        return Image.fromarray(out)
 
     if gamma != 1.0:
         arr16 = np.array(img, dtype=np.float32) / 255.0
@@ -1251,7 +1277,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
                   dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0,
-                  snap_palette=False, bg_flatten=0, smooth=0):
+                  snap_palette=False, bg_flatten=0, smooth=0, direct_sample=False):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -1279,7 +1305,8 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         sharpen_threshold=sharpen_threshold,
         gamma=gamma, contrast=contrast, saturation=saturation, dither=dither,
         quant_colors=quant_colors, posterize=posterize, median=median, snap=snap,
-        snap_palette=snap_palette, bg_flatten=bg_flatten)
+        snap_palette=snap_palette, bg_flatten=bg_flatten,
+        direct_sample=direct_sample)
     arr = np.array(preprocessed, dtype=np.uint8)
     pw, ph = preprocessed.size
 
@@ -1819,6 +1846,12 @@ def main():
                              '1.5-2.0 = recommended for photographic sources (Teletext palette is '
                              'fully saturated so boosting helps snap colours to the nearest entry); '
                              '3.0+ = vivid/posterised look.')
+    parser.add_argument('--direct-sample', action='store_true', default=False,
+                        help='Bypass bilinear resize: quantise the source image to the 8-colour '
+                             'palette at full resolution, then point-sample it at the exact '
+                             '78×75 sub-pixel grid positions. Preserves separated graphics, '
+                             'fine patterns, and cross-hatch textures that bilinear resize '
+                             'blurs into grey. Ideal for images that are already Teletext renders.')
     parser.add_argument('--ssd', metavar='DISK.SSD',
                         help='Add output to a BBC Micro DFS .ssd disk image '
                              '(80-track, created if it does not exist)')
@@ -1878,6 +1911,7 @@ def main():
         snap_palette=args.snap_palette,
         bg_flatten=args.bg_flatten,
         smooth=args.smooth,
+        direct_sample=args.direct_sample,
     )
 
     # Write binary

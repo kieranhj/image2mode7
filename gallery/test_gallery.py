@@ -11,6 +11,7 @@ Usage:
 """
 
 import pathlib, json, sys, argparse, time
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import numpy as np
 from PIL import Image
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -18,7 +19,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import image2teletext as m7
 import teletext_decode as td
 
-GALLERY_DIR = pathlib.Path('test/horsenburger')
+GALLERY_DIR = pathlib.Path(__file__).parent.parent / 'test/horsenburger'
 
 # Derive the PAR that forces exactly 39 solver columns (frame_w=39, pw=78)
 # for an image of given dimensions, regardless of its aspect ratio.
@@ -32,10 +33,10 @@ def settings_for_image(img_path):
     img = Image.open(img_path)
     iw, ih = img.size
     return dict(
+        direct_sample=True,   # point-sample at exact SP grid — avoids bilinear blur
         snap_palette=True,
-        quant_colors=8,
+        quant_colors=0,
         smooth=0,
-        filter='bilinear',
         par=par_for_image(iw, ih),
     )
 
@@ -165,8 +166,9 @@ def main():
         print(f'Good (>=80%):      {good}')
         print(f'Poor (<50%):      {sum(1 for p in pcts if p < 50)}')
 
-    pathlib.Path(args.out).write_text(json.dumps(results, indent=2))
-    print(f'\nFull results written to {args.out}')
+    out_path = pathlib.Path(__file__).parent / args.out
+    out_path.write_text(json.dumps(results, indent=2))
+    print(f'\nFull results written to {out_path}')
 
 
 if __name__ == '__main__':

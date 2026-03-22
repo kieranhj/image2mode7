@@ -8,11 +8,17 @@ Test method: `python test_gallery.py` — converts each image with image2teletex
 renders the output back to the original dimensions using `teletext_decode.render_bytes`,
 and counts character cells where all 6 sub-pixels match.
 
-**Baseline results (200-image sample, May 2026):**
+**Baseline results (200-image sample, May 2026, before render_bytes fix):**
 - Mean cell match: 40.5%
 - Median: 36.0%
 - ≥80% match: 7 images (3.5%)
 - <50% match: 156 images (78%)
+
+**After fixing teletext_decode.render_bytes (50-image sample, March 2026):**
+- Mean cell match: 56.2%
+- Median: 57.0%
+- >=80% match: 3 images (6%)
+- <50% match: 15 images (30%)
 
 ---
 
@@ -133,6 +139,26 @@ Not a converter bug per se, but a documentation/usability gap.
 
 ---
 
+## Bug 7 — ~~teletext_decode.render_bytes used wrong graphics byte range~~ FIXED
+
+**Description:** `teletext_decode.py` originally encoded graphics characters in the
+range 0xA0–0xFF (with `pattern_to_gfx_byte` using base `0xA0`), and `render_bytes`
+only recognised that range as graphics. However, `image2teletext.py` correctly uses
+the SAA5050 encoding where graphics bytes sit in 0x20–0x3F and 0x60–0x7F (base 0x20,
+with sub-pixels in bits [0,1,2,3,4,6]). Every graphics cell was therefore rendered
+as background, producing completely garbled comparison images and invalid match
+scores.
+
+**Effect:** All gallery match scores were systematically wrong — showing 40.5% mean
+when the true value (post-fix) is ~56.2% on the same sample.
+
+**Fix:** Changed `pattern_to_gfx_byte` to use base `0x20`; updated `gfx_byte_to_pattern`
+to handle 0x20–0x3F and 0x60–0x7F; rewrote `render_bytes` to use `GFX_PIXEL_BITS`
+[1,2,4,8,16,64] for bit extraction and added proper hold-graphics state tracking.
+**Fixed in teletext_decode.py (March 2026).**
+
+---
+
 ## Summary Table
 
 | # | Issue | Impact | Fix Complexity |
@@ -143,3 +169,4 @@ Not a converter bug per se, but a documentation/usability gap.
 | 4 | Sub-pixel sampling offset from resize | Low-Medium | Low |
 | 5 | ~~Hold graphics not emitted~~ — NOT A BUG, already implemented | — | — |
 | 6 | PAR must be computed per gallery image | Operational | Low (documented) |
+| 7 | ~~render_bytes used wrong graphics byte range~~ — FIXED | Was very high | Fixed |

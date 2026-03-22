@@ -44,12 +44,17 @@ best results.  Recommended W: 2.0–5.0.
 
 ## Medium impact
 
-### 5. Per-region separated vs. contiguous graphics mode
+### 5. Per-region separated vs. contiguous graphics mode ✓ (via DP + --edge-weight)
 The `--sep` flag applies separated mode globally.  The real artistic technique is
 to use contiguous graphics for flat foreground objects and separated graphics for
 textured backgrounds, hair, foliage, shadow fringing — anything that shouldn't
-be a solid block.  A local-variance pass per character cell could switch mode
-automatically: low variance → contiguous, high variance → separated.
+be a solid block.
+
+**Status:** The DP with `--sep` already selects separated mode only where it
+reduces error — effectively per-region auto-switching via the SEP_GFX /
+CONTIG_GFX control codes.  Combining `--sep --edge-weight 3` concentrates sep
+usage at high-contrast boundaries (fur edges, foliage silhouettes) exactly as
+intended.  Explicit local-variance pre-filtering not needed; the DP handles it.
 
 ### 6. Held graphics at colour transitions
 When a colour-change control code is needed mid-row it consumes a character cell,

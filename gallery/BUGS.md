@@ -8,17 +8,14 @@ Test method: `python test_gallery.py` — converts each image with image2teletex
 renders the output back to the original dimensions using `teletext_decode.render_bytes`,
 and counts character cells where all 6 sub-pixels match.
 
-**Baseline results (200-image sample, May 2026, before render_bytes fix):**
-- Mean cell match: 40.5%
-- Median: 36.0%
-- ≥80% match: 7 images (3.5%)
-- <50% match: 156 images (78%)
+**Baseline (pre-fix, 200-image sample, cols 0–39):**
+- Mean: 40.5%, Median: 36.0%, ≥80%: 7 images, <50%: 156 images
 
-**After fixing teletext_decode.render_bytes (50-image sample, March 2026):**
-- Mean cell match: 56.2%
-- Median: 57.0%
-- >=80% match: 3 images (6%)
-- <50% match: 15 images (30%)
+**After render_bytes fix + direct_sample (200 images, cols 0–39):**
+- Mean: 96.6%, Median: 96.6%, ≥80%: 200/200, Perfect (≥99.9%): 13
+
+**Current baseline (200 images, cols 1–39 only — col 0 skipped as control code):**
+- Mean: 98.3%, Median: 98.7%, ≥80%: 200/200, Perfect (≥99.9%): 39, Min: 93.3%
 
 ---
 
@@ -71,8 +68,9 @@ The converter output is correct. The gallery artists most likely cropped the
 exported PNG to remove the leftmost black strip before uploading, which is why the
 original appears to have colour extending to x=0.
 
-**Action:** No fix needed in the converter. The test harness could optionally skip
-col 0 when computing match scores to avoid penalising correct behaviour.
+**Action:** No fix needed in the converter. `test_gallery.py` now skips col 0
+(range starts at 1, denominator is `N_ROWS × (N_COLS - 1) = 975`), consistent
+with `make_gallery_html.py`. **Fixed in test_gallery.py (March 2026).**
 
 ---
 
@@ -93,7 +91,7 @@ try both modes per cell and pick the lower-error option.
 
 ---
 
-## Bug 4 — Sub-pixel sampling offset from resize (LOW-MEDIUM IMPACT)
+## Bug 4 — ~~Sub-pixel sampling offset from resize~~ FIXED (LOW-MEDIUM IMPACT)
 
 **Description:** The converter resizes the source image to `pw × ph` pixels using
 bilinear (or other) interpolation, then treats each pixel as one sub-pixel. PIL's
@@ -114,6 +112,11 @@ colour transitions.
 **Fix direction:** Pre-sample the source image using the same centre-sampling
 formula as `teletext_decode.sample_subpixels()` before passing to the solver,
 rather than relying on PIL resize.
+
+**Fix:** `--direct-sample` flag (also `direct_sample=True` in API) implements
+exact centre-point sampling at the 80×75 SP grid positions, bypassing bilinear
+resize entirely. Used by default in `test_gallery.py`. **Fixed in image2teletext.py
+(March 2026).**
 
 ---
 
@@ -164,9 +167,9 @@ to handle 0x20–0x3F and 0x60–0x7F; rewrote `render_bytes` to use `GFX_PIXEL_
 | # | Issue | Impact | Fix Complexity |
 |---|-------|--------|----------------|
 | 1 | Alphanumeric characters not supported | Very high | High |
-| 2 | Left-edge strip — gallery images are cropped; converter is correct | Test artefact | Skip col 0 in test |
+| 2 | Left-edge strip — gallery images are cropped; converter is correct | Test artefact | Fixed in test_gallery.py |
 | 3 | Separated graphics not auto-detected | Medium | Medium |
-| 4 | Sub-pixel sampling offset from resize | Low-Medium | Low |
+| 4 | ~~Sub-pixel sampling offset from resize~~ — FIXED via `--direct-sample` | Was Low-Medium | Fixed |
 | 5 | ~~Hold graphics not emitted~~ — NOT A BUG, already implemented | — | — |
 | 6 | PAR must be computed per gallery image | Operational | Low (documented) |
 | 7 | ~~render_bytes used wrong graphics byte range~~ — FIXED | Was very high | Fixed |

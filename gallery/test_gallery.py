@@ -72,11 +72,11 @@ def test_one(img_path, settings=None):
         sp_orig = td.sample_subpixels(cmap_orig, iw, ih)
         sp_rend = td.sample_subpixels(cmap_rend, iw, ih)
 
-        # Compare cell by cell
+        # Compare cell by cell — skip col 0 (always a control code, never graphics)
         matching = 0
         errors = []
         for row in range(td.N_ROWS):
-            for col in range(td.N_COLS):
+            for col in range(1, td.N_COLS):   # col 0 is always a control byte
                 orig_sp = sp_orig[row * 3:(row + 1) * 3, col * 2:(col + 1) * 2]
                 rend_sp = sp_rend[row * 3:(row + 1) * 3, col * 2:(col + 1) * 2]
                 if np.array_equal(orig_sp, rend_sp):
@@ -86,7 +86,7 @@ def test_one(img_path, settings=None):
                                    orig_sp.flatten().tolist(),
                                    rend_sp.flatten().tolist()))
 
-        match_pct = 100.0 * matching / (td.N_ROWS * td.N_COLS)
+        match_pct = 100.0 * matching / (td.N_ROWS * (td.N_COLS - 1))  # 25 × 39 = 975
 
         # Categorise errors
         wrong_colour = sum(1 for _, _, o, r in errors

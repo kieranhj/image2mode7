@@ -572,6 +572,58 @@ def build_error_table(img, y7, frame_w, luma=False, linear=False):
     return err_table, gfx_table
 
 
+# ---------------------------------------------------------------------------
+# Per-cell saliency weights (silhouette / edge priority)
+# ---------------------------------------------------------------------------
+
+def compute_edge_weights(arr, frame_w, frame_h, edge_weight):
+    """
+    Compute per-cell local-contrast saliency weights.
+    Returns (frame_h, frame_w) float32 array, or None if edge_weight <= 1.0.
+
+    Each cell's weight is proportional to the maximum Euclidean RGB distance
+    between its mean colour and the mean colour of its 4-connected neighbours
+    (left, right, above, below).  High-contrast cells — object/background
+    silhouette edges, colour-region boundaries — get weights up to edge_weight;
+    uniform interior cells get weight 1.0.
+
+    Multiplying the DP error table by these weights makes the solver prioritise
+    faithfully reproducing cells at strong colour edges at the cost of less
+    accuracy in flat, uniform regions.
+    """
+    if edge_weight <= 1.0:
+        return None
+
+    # Cell mean RGB — vectorised reshape avoids a Python loop.
+    # arr is (frame_h*3, frame_w*2, 3); reshape to (frame_h, 3, frame_w, 2, 3)
+    cell_rgb = (arr[:frame_h * 3, :frame_w * 2, :3]
+                .astype(np.float32)
+                .reshape(frame_h, 3, frame_w, 2, 3)
+                .mean(axis=(1, 3)))   # (frame_h, frame_w, 3)
+
+    contrast = np.zeros((frame_h, frame_w), dtype=np.float32)
+
+    # Horizontal neighbours
+    if frame_w > 1:
+        d = cell_rgb[:, 1:] - cell_rgb[:, :-1]       # (frame_h, frame_w-1, 3)
+        dist = np.sqrt((d ** 2).sum(axis=2))          # (frame_h, frame_w-1)
+        contrast[:, :-1] = np.maximum(contrast[:, :-1], dist)
+        contrast[:, 1:]  = np.maximum(contrast[:, 1:],  dist)
+
+    # Vertical neighbours
+    if frame_h > 1:
+        d = cell_rgb[1:] - cell_rgb[:-1]              # (frame_h-1, frame_w, 3)
+        dist = np.sqrt((d ** 2).sum(axis=2))          # (frame_h-1, frame_w)
+        contrast[:-1] = np.maximum(contrast[:-1], dist)
+        contrast[1:]  = np.maximum(contrast[1:],  dist)
+
+    mx = contrast.max()
+    if mx > 0:
+        contrast /= mx    # normalise to [0, 1]
+
+    return (1.0 + (edge_weight - 1.0) * contrast).astype(np.float32)
+
+
 def _candidates(state, use_hold, use_fill, use_sep, gfx_char):
     """Return list of candidate byte values to try at a given state."""
     fg, bg, hold_mode, last_gfx, sep = unpack_state(state)
@@ -1277,7 +1329,8 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
                   dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0,
-                  snap_palette=False, bg_flatten=0, smooth=0, direct_sample=False):
+                  snap_palette=False, bg_flatten=0, smooth=0, direct_sample=False,
+                  edge_weight=1.0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -1298,6 +1351,11 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
          every valid candidate is tried; if substituting it (while re-simulating
          state forward through the fixed subsequent characters) reduces the total
          tail error the substitution is accepted.  Repeats until convergence.
+    edge_weight: per-cell saliency weight multiplier (default 1.0 = off).
+         Cells at strong colour/luminance boundaries get their DP error scaled
+         up by up to edge_weight, so the solver prioritises matching silhouette
+         edges at the cost of less accuracy in flat, uniform regions.
+         Recommended range: 2.0–5.0.  Has no effect if <= 1.0.
     """
     preprocessed = preprocess_image(
         img_path, filter=filter, par=par,
@@ -1323,8 +1381,14 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
 
     solver = greedy_row if greedy else dp_row
 
+    # Precompute per-cell edge weights (None if edge_weight <= 1.0)
+    cell_weights = compute_edge_weights(arr, frame_w, frame_h, edge_weight)
+
     def _solve_row(y7):
         et, gt = build_error_table(arr, y7, frame_w, luma=luma, linear=linear)
+        if cell_weights is not None:
+            w = cell_weights[y7, :, np.newaxis, np.newaxis, np.newaxis, np.newaxis]
+            et = np.round(et * w).astype(np.int32)
         row = solver(et, gt, frame_w,
                      use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
         if refine or greedy:   # refine is always applied after greedy; explicit --refine adds it to DP
@@ -1852,6 +1916,13 @@ def main():
                              '78×75 sub-pixel grid positions. Preserves separated graphics, '
                              'fine patterns, and cross-hatch textures that bilinear resize '
                              'blurs into grey. Ideal for images that are already Teletext renders.')
+    parser.add_argument('--edge-weight', type=float, default=1.0, metavar='W',
+                        help='Silhouette-edge saliency weight (default: 1.0 = off). '
+                             'Cells at strong colour-boundary edges get their DP error scaled '
+                             'up by up to W, making the solver prioritise sharp, faithful '
+                             'silhouette reproduction at the cost of some accuracy in flat '
+                             'uniform regions. Recommended range: 2.0–5.0. '
+                             'Best combined with --bg-flatten or --snap-palette.')
     parser.add_argument('--ssd', metavar='DISK.SSD',
                         help='Add output to a BBC Micro DFS .ssd disk image '
                              '(80-track, created if it does not exist)')
@@ -1912,6 +1983,7 @@ def main():
         bg_flatten=args.bg_flatten,
         smooth=args.smooth,
         direct_sample=args.direct_sample,
+        edge_weight=args.edge_weight,
     )
 
     # Write binary

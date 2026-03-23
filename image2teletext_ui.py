@@ -149,22 +149,7 @@ def convert(image_path, par, gamma, contrast, saturation,
 
 _preprocess_params = None   # filled in after widget creation
 
-_CSS = """
-#controls-col {
-    padding-bottom: 72px !important;
-}
-#action-btns {
-    position: fixed !important;
-    bottom: 0;
-    left: 0;
-    right: 50%;
-    background: var(--background-fill-primary);
-    padding: 8px 16px 12px !important;
-    z-index: 1000;
-    border-top: 1px solid var(--border-color-primary);
-    box-shadow: 0 -2px 6px rgba(0,0,0,0.12);
-}
-"""
+_CSS = ""
 
 with gr.Blocks(title="image2teletext") as demo:
 
@@ -178,7 +163,7 @@ with gr.Blocks(title="image2teletext") as demo:
     with gr.Row():
 
         # ── Left column: controls ──────────────────────────────────────────
-        with gr.Column(scale=1, min_width=360, elem_id="controls-col"):
+        with gr.Column(scale=1, min_width=360):
 
             image_input = gr.Image(
                 type="filepath", label="Input image",
@@ -205,6 +190,10 @@ with gr.Blocks(title="image2teletext") as demo:
             )
 
             _tv = {**_PRESET_DEFAULTS, **m.PRESETS['tv']}
+
+            with gr.Row():
+                preview_btn = gr.Button("Preview preprocessed image", variant="secondary")
+                convert_btn = gr.Button("Convert to Teletext", variant="primary")
 
             with gr.Accordion("Image processing", open=True):
                 gr.Markdown(
@@ -375,10 +364,6 @@ with gr.Blocks(title="image2teletext") as demo:
                              "Corrects for gamma encoding; dark-tone differences are weighted "
                              "more fairly.",
                     )
-
-            with gr.Row(elem_id="action-btns"):
-                preview_btn = gr.Button("Preview preprocessed image", variant="secondary")
-                convert_btn = gr.Button("Convert to Teletext", variant="primary")
 
         # ── Right column: outputs ──────────────────────────────────────────
         with gr.Column(scale=1, min_width=380):

@@ -150,12 +150,19 @@ def convert(image_path, par, gamma, contrast, saturation,
 _preprocess_params = None   # filled in after widget creation
 
 _CSS = """
+#controls-col {
+    padding-bottom: 72px !important;
+}
 #action-btns {
-    position: sticky;
+    position: fixed !important;
     bottom: 0;
+    left: 0;
+    right: 50%;
     background: var(--background-fill-primary);
-    padding: 8px 0 4px;
-    z-index: 10;
+    padding: 8px 16px 12px !important;
+    z-index: 1000;
+    border-top: 1px solid var(--border-color-primary);
+    box-shadow: 0 -2px 6px rgba(0,0,0,0.12);
 }
 """
 
@@ -171,7 +178,7 @@ with gr.Blocks(title="image2teletext") as demo:
     with gr.Row():
 
         # ── Left column: controls ──────────────────────────────────────────
-        with gr.Column(scale=1, min_width=360):
+        with gr.Column(scale=1, min_width=360, elem_id="controls-col"):
 
             image_input = gr.Image(
                 type="filepath", label="Input image",

@@ -149,6 +149,22 @@ def convert(image_path, par, gamma, contrast, saturation,
 
 _preprocess_params = None   # filled in after widget creation
 
+_CSS = """
+#controls-col {
+    position: sticky;
+    top: 0;
+    max-height: 100vh;
+    overflow-y: auto;
+}
+#action-btns {
+    position: sticky;
+    bottom: 0;
+    background: var(--background-fill-primary);
+    padding: 8px 0 4px;
+    z-index: 10;
+}
+"""
+
 with gr.Blocks(title="image2teletext") as demo:
 
     gr.Markdown(
@@ -161,7 +177,7 @@ with gr.Blocks(title="image2teletext") as demo:
     with gr.Row():
 
         # ── Left column: controls ──────────────────────────────────────────
-        with gr.Column(scale=1, min_width=360):
+        with gr.Column(scale=1, min_width=360, elem_id="controls-col"):
 
             image_input = gr.Image(
                 type="filepath", label="Input image",
@@ -359,7 +375,7 @@ with gr.Blocks(title="image2teletext") as demo:
                              "more fairly.",
                     )
 
-            with gr.Row():
+            with gr.Row(elem_id="action-btns"):
                 preview_btn = gr.Button("Preview processing", variant="secondary")
                 convert_btn = gr.Button("Convert to Teletext", variant="primary")
 
@@ -440,4 +456,4 @@ with gr.Blocks(title="image2teletext") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(css=_CSS)

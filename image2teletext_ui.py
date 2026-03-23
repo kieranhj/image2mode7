@@ -394,8 +394,6 @@ with gr.Blocks(title="image2teletext") as demo:
         snap_s, quant_s, posterize_s, median_s, snap_palette_cb, bg_flatten_s,
         edge_weight_s,
     ]
-    preset_dd.change(_apply_preset, inputs=[preset_dd], outputs=_slider_outputs)
-
     # ── Shared input list for preprocessing params ─────────────────────────
     _proc_inputs = [
         image_input,
@@ -408,6 +406,13 @@ with gr.Blocks(title="image2teletext") as demo:
     _conv_inputs = _proc_inputs + [
         luma_cb, linear_cb, sep_cb, smooth_s, edge_weight_s,
     ]
+
+    # ── Preset → sliders → preview ────────────────────────────────────────
+    preset_dd.change(
+        _apply_preset, inputs=[preset_dd], outputs=_slider_outputs,
+    ).then(
+        preprocess_preview, inputs=_proc_inputs, outputs=[processed_out, output_tabs],
+    )
 
     # ── Preview button ────────────────────────────────────────────────────
     preview_btn.click(

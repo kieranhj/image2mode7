@@ -1719,29 +1719,32 @@ PRESETS = {
         # Strong sharpening with a tight radius to preserve hard edges;
         # high saturation to snap to palette colours; no threshold so every
         # edge is enhanced.  Edge weight 3.0 prioritises crisp silhouettes.
+        # Dither off: clean flat colour blocks, not dithered gradients.
         saturation=2.0, contrast=1.5,
         sharpen_amount=300, sharpen_radius=0.5, sharpen_threshold=0,
-        edge_weight=3.0,
+        edge_weight=3.0, dither=False,
     ),
     'flat': dict(
         # Bold, graphic style with deliberately limited colours.
         # Posterise reduces tonal steps to hard bands; aggressive snap forces
         # remaining mid-tones to the nearest Teletext colour; high saturation
         # and contrast push everything toward the palette extremes.
-        # Good for logos, illustration-style images, or a punchy retro look.
+        # Dither off: posterise+snap already force hard colour bands; dither
+        # just adds speckle within those bands.
         posterize=3, snap=70,
         saturation=2.5, contrast=1.8,
         sharpen_amount=200, sharpen_radius=0.5, sharpen_threshold=0,
+        dither=False,
     ),
     'retro': dict(
         # Mimics the limited, blocky look of real Ceefax pages.
         # Pre-quantises to 8 colours and snaps aggressively to the Teletext
-        # palette, producing flat regions with minimal dithering noise.
+        # palette, producing flat regions with no dithering noise.
         # Less detail but very authentic.
         quant_colors=8, snap=80,
         saturation=2.2, contrast=1.4,
         sharpen_amount=100, sharpen_radius=1.0,
-        par=1.2,
+        par=1.2, dither=False,
     ),
     'art': dict(
         # Teletext-art-style output: flatten background, quantise to 6 dominant
@@ -1749,11 +1752,12 @@ PRESETS = {
         # colour.  Produces smooth colour boundaries rather than per-pixel noise
         # — the hallmark of hand-crafted teletext art.
         # Edge weight 2.5 reflects the teletext aesthetic: silhouette over detail.
+        # Dither off: snap_palette overwrites any dither pattern anyway.
         # Pairs well with --smooth 3 for further run cleanup.
         bg_flatten=60, quant_colors=6, snap_palette=True,
         saturation=2.0, contrast=1.4,
         sharpen_amount=120, sharpen_radius=1.0, sharpen_threshold=3,
-        edge_weight=2.5,
+        edge_weight=2.5, dither=False,
     ),
     'dark': dict(
         # Dark or underexposed source images.

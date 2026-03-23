@@ -27,7 +27,7 @@ _PRESET_DEFAULTS = dict(
     par=1.2, gamma=1.0, contrast=1.0, saturation=1.0,
     sharpen_amount=0, sharpen_radius=1.0, sharpen_threshold=0,
     snap=0, quant_colors=0, posterize=0, median=0, snap_palette=False,
-    bg_flatten=0, edge_weight=1.0,
+    bg_flatten=0, edge_weight=1.0, dither=True,
 )
 
 def _apply_preset(preset_name):
@@ -36,7 +36,7 @@ def _apply_preset(preset_name):
         p['par'], p['gamma'], p['contrast'], p['saturation'],
         p['sharpen_amount'], p['sharpen_radius'], p['sharpen_threshold'],
         p['snap'], p['quant_colors'], p['posterize'], p['median'],
-        p['snap_palette'], p['bg_flatten'], p['edge_weight'],
+        p['snap_palette'], p['bg_flatten'], p['edge_weight'], p['dither'],
     )
 
 # ---------------------------------------------------------------------------
@@ -409,7 +409,7 @@ with gr.Blocks(title="image2teletext") as demo:
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
         snap_s, quant_s, posterize_s, median_s, snap_palette_cb, bg_flatten_s,
-        edge_weight_s,
+        edge_weight_s, dither_cb,
     ]
     # ── Shared input list for preprocessing params ─────────────────────────
     _proc_inputs = [

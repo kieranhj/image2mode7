@@ -19,6 +19,7 @@ must solve a constrained optimisation problem, not just remap pixels.
 |------|---------|
 | `image2teletext.py` | Command-line converter (Python) |
 | `image2teletext_ui.py` | Gradio web UI |
+| `teletext_decode.py` | Teletext byte-stream renderer (used internally for previews) |
 | `image2mode7.exe` | Legacy C++ converter (basic, superseded by the Python tool) |
 
 ## Quick start
@@ -52,15 +53,15 @@ python image2teletext.py [options] input
 | Option | Description |
 |--------|-------------|
 | `--greedy` | Fast greedy solver instead of full DP. Applies local-search refinement automatically; ~4× faster than DP, good for quick previews |
-| `--refine` | Run a local-search refinement pass after solving. Tries every valid candidate at each cell position and accepts substitutions that reduce tail error. 1–3 passes to convergence |
 | `--nohold` | Disable Hold Graphics optimisation |
 | `--nofill` | Disable New Background optimisation |
-| `--sep` | Enable Separated Graphics mode |
+| `--sep` | Enable Separated Graphics mode. Sub-pixels have a 1-pixel gap instead of being contiguous. Pairs well with `--edge-weight` |
 
 ### Error metric
 
 | Option | Description |
 |--------|-------------|
+| `--edge-weight W` | Scale the DP error for cells at strong colour/luminance boundaries by up to W, prioritising faithful silhouette reproduction at the cost of some accuracy in flat regions. `1.0` = off (default); `2–3` subtle; `4–5` strong. Pairs well with `--sep` |
 | `--luma` | Use perceptual luminance weighting (ITU-R BT.601) |
 | `--linear` | Linearise sRGB pixels before computing squared error (corrects gamma bias in dark tones) |
 
@@ -68,7 +69,8 @@ python image2teletext.py [options] input
 
 | Option | Description |
 |--------|-------------|
-| `--filter {bilinear,lanczos,bicubic,nearest,cimg}` | Resampling filter for resize (default: `bilinear`) |
+| `--filter {bilinear,lanczos,bicubic,nearest,cimg}` | Resampling filter for resize (default: `bilinear`). Ignored when `--direct-sample` is set |
+| `--direct-sample` | Bypass PIL resize entirely: point-sample the source image at the exact 80×75 sub-pixel grid centres. Eliminates the ~0.3px boundary misalignment introduced by bilinear resampling. Recommended for images with hard colour edges |
 | `--par RATIO` | Pixel aspect ratio — `1.2` modern LCD TV (default), `1.0` square pixels / emulator, `1.22` CRT TV |
 | `--contrast C` | Contrast factor before resize (1.0 = off; 1.2–1.5 subtle; 1.5–2.5 strong) |
 | `--gamma G` | Power-law tone adjustment: `output = (input/255)^(1/G) × 255`. 1.5–2.2 brightens; 0.5–0.8 darkens |
@@ -103,11 +105,11 @@ Named bundles of options for common use cases.  Any explicit flag overrides the 
 | `photo` | Balanced portraits and landscapes |
 | `clean` | Like `photo` with light denoising and snap (less speckle) |
 | `smooth` | Heavy noise reduction, noisy JPEGs |
-| `vivid` | Punchy colours, strong edges |
-| `graphic` | Logos and cartoons (tight sharpening, high saturation) |
+| `vivid` | Punchy colours, strong edges (includes edge-weight 2.0) |
+| `graphic` | Logos and cartoons (tight sharpening, high saturation, edge-weight 3.0) |
 | `flat` | Bold posterised look with limited palette |
 | `retro` | Authentic Ceefax style, blocky limited colours |
-| `art` | Teletext art aesthetic: bg flatten, 6-colour palette, snap, high saturation |
+| `art` | Teletext art aesthetic: bg flatten, 6-colour palette, snap, high saturation (edge-weight 2.5) |
 | `dark` | Underexposed images (gamma lift) |
 | `tv` | LCD TV viewing (PAR 1.2 + photo) |
 | `crt` | CRT TV viewing (PAR 1.22 + photo) |
@@ -121,6 +123,16 @@ python image2teletext_ui.py
 
 Opens a local Gradio interface with sliders for all major options, live preview,
 and download buttons for the `.bin` file and rendered PNG.
+
+Controls are grouped into three collapsible sections:
+
+- **Image processing** — gamma, contrast, saturation, median filter, unsharp mask
+- **Teletext palette** — dithering, background flatten, quantisation, snap, posterise
+- **Teletext encoding** — pixel aspect ratio, separated graphics, edge weight, colour-run smoothing, resize filter, direct sample, luma/linear error weighting
+
+Selecting a preset immediately updates all sliders and refreshes the preprocessing
+preview.  The `--greedy` solver is not available in the UI; use the CLI for quick
+draft conversions.
 
 ## Output format
 

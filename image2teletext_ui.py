@@ -377,7 +377,7 @@ with gr.Blocks(title="image2teletext") as demo:
                     )
 
             with gr.Row(elem_id="action-btns"):
-                preview_btn = gr.Button("Preview processing", variant="secondary")
+                preview_btn = gr.Button("Preview preprocessed image", variant="secondary")
                 convert_btn = gr.Button("Convert to Teletext", variant="primary")
 
         # ── Right column: outputs ──────────────────────────────────────────

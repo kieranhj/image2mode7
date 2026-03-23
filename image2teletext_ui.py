@@ -50,7 +50,7 @@ _PREVIEW_SCALE = 8
 def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
                        filter_name, dither, quant_colors, posterize, snap, median,
-                       snap_palette, bg_flatten):
+                       snap_palette, bg_flatten, direct_sample):
     """Shared arg list used by both preprocess_preview and convert."""
     return dict(
         filter=filter_name, par=par,
@@ -65,18 +65,20 @@ def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
         median=int(median),
         snap_palette=bool(snap_palette),
         bg_flatten=int(bg_flatten),
+        direct_sample=bool(direct_sample),
     )
 
 def preprocess_preview(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
                        filter_name, dither, quant_colors, posterize, snap, median,
-                       snap_palette, bg_flatten):
+                       snap_palette, bg_flatten, direct_sample):
     if image_path is None:
         raise gr.Error("Upload an image first.")
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
         filter_name, dither, quant_colors, posterize, snap, median, snap_palette, bg_flatten,
+        direct_sample,
     )
     img = m.preprocess_image(image_path, **kwargs)
     # Scale up so individual sub-pixels are clearly visible
@@ -92,7 +94,8 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
             filter_name, dither, quant_colors, posterize, snap, median,
-            snap_palette, bg_flatten, greedy, refine, luma, linear, sep, smooth):
+            snap_palette, bg_flatten, direct_sample,
+            greedy, refine, luma, linear, sep, smooth, edge_weight):
     if image_path is None:
         raise gr.Error("Upload an image first.")
 
@@ -100,16 +103,18 @@ def convert(image_path, par, gamma, contrast, saturation,
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
         filter_name, dither, quant_colors, posterize, snap, median, snap_palette, bg_flatten,
+        direct_sample,
     )
     page = m.convert_image(
         image_path,
         use_hold=True, use_fill=True, use_sep=sep,
         greedy=greedy, luma=luma, linear=linear, refine=refine,
         smooth=int(smooth),
+        edge_weight=float(edge_weight),
         **kwargs,
     )
 
-    # Processing preview (reuse the already-run pipeline result)
+    # Processing preview — rerun preprocess (kwargs already has direct_sample)
     proc_img = m.preprocess_image(image_path, **kwargs)
     proc_img = proc_img.resize(
         (proc_img.width * _PREVIEW_SCALE, proc_img.height * _PREVIEW_SCALE),
@@ -353,8 +358,25 @@ with gr.Blocks(title="image2teletext") as demo:
                         info="Enable separated graphics mode. Sub-pixels have a 1-pixel gap "
                              "between them instead of being contiguous, giving a more open "
                              "gridded look. Uses a different SAA5050 character set variant. "
-                             "Off by default.",
+                             "Pairs well with Edge weight > 1 for textured areas. Off by default.",
                     )
+                    direct_sample_cb = gr.Checkbox(False,
+                        label="--direct-sample  (point-sample for Teletext sources)",
+                        info="Bypass bilinear resize: quantise at full resolution and "
+                             "point-sample at the exact 80×75 sub-pixel grid positions. "
+                             "Preserves fine patterns and separated graphics textures "
+                             "that bilinear resize blurs into grey. "
+                             "Ideal for images that are already Teletext renders.",
+                    )
+                edge_weight_s = gr.Slider(
+                    1.0, 8.0, value=1.0, step=0.5,
+                    label="Edge weight  (1.0 = off · silhouette priority)",
+                    info="Scale the solver error for cells at strong colour boundaries "
+                         "by up to this factor. The solver spends more effort accurately "
+                         "reproducing silhouette edges at the cost of some accuracy in flat "
+                         "uniform regions. 1.0 = off; 2–3 = subtle; 4–5 = strong. "
+                         "Combine with Separated graphics for textured boundary effects.",
+                )
 
             with gr.Row():
                 preview_btn = gr.Button("Preview processing", variant="secondary")
@@ -398,11 +420,11 @@ with gr.Blocks(title="image2teletext") as demo:
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
         filter_dd, dither_cb, quant_s, posterize_s, snap_s, median_s,
-        snap_palette_cb, bg_flatten_s,
+        snap_palette_cb, bg_flatten_s, direct_sample_cb,
     ]
 
     _conv_inputs = _proc_inputs + [
-        greedy_cb, refine_cb, luma_cb, linear_cb, sep_cb, smooth_s,
+        greedy_cb, refine_cb, luma_cb, linear_cb, sep_cb, smooth_s, edge_weight_s,
     ]
 
     # ── Preview button ────────────────────────────────────────────────────

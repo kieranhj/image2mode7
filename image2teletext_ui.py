@@ -27,7 +27,7 @@ _PRESET_DEFAULTS = dict(
     par=1.2, gamma=1.0, contrast=1.0, saturation=1.0,
     sharpen_amount=0, sharpen_radius=1.0, sharpen_threshold=0,
     snap=0, quant_colors=0, posterize=0, median=0, snap_palette=False,
-    bg_flatten=0,
+    bg_flatten=0, edge_weight=1.0,
 )
 
 def _apply_preset(preset_name):
@@ -36,7 +36,7 @@ def _apply_preset(preset_name):
         p['par'], p['gamma'], p['contrast'], p['saturation'],
         p['sharpen_amount'], p['sharpen_radius'], p['sharpen_threshold'],
         p['snap'], p['quant_colors'], p['posterize'], p['median'],
-        p['snap_palette'], p['bg_flatten'],
+        p['snap_palette'], p['bg_flatten'], p['edge_weight'],
     )
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ _PREVIEW_SCALE = 8
 def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
                        filter_name, dither, quant_colors, posterize, snap, median,
-                       snap_palette, bg_flatten):
+                       snap_palette, bg_flatten, direct_sample):
     """Shared arg list used by both preprocess_preview and convert."""
     return dict(
         filter=filter_name, par=par,
@@ -65,18 +65,20 @@ def _preprocess_inputs(image_path, par, gamma, contrast, saturation,
         median=int(median),
         snap_palette=bool(snap_palette),
         bg_flatten=int(bg_flatten),
+        direct_sample=bool(direct_sample),
     )
 
 def preprocess_preview(image_path, par, gamma, contrast, saturation,
                        sharpen_amount, sharpen_radius, sharpen_threshold,
                        filter_name, dither, quant_colors, posterize, snap, median,
-                       snap_palette, bg_flatten):
+                       snap_palette, bg_flatten, direct_sample):
     if image_path is None:
         raise gr.Error("Upload an image first.")
     kwargs = _preprocess_inputs(
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
         filter_name, dither, quant_colors, posterize, snap, median, snap_palette, bg_flatten,
+        direct_sample,
     )
     img = m.preprocess_image(image_path, **kwargs)
     # Scale up so individual sub-pixels are clearly visible
@@ -92,7 +94,8 @@ def preprocess_preview(image_path, par, gamma, contrast, saturation,
 def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
             filter_name, dither, quant_colors, posterize, snap, median,
-            snap_palette, bg_flatten, greedy, refine, luma, linear, sep, smooth):
+            snap_palette, bg_flatten, direct_sample,
+            luma, linear, sep, smooth, edge_weight):
     if image_path is None:
         raise gr.Error("Upload an image first.")
 
@@ -100,16 +103,18 @@ def convert(image_path, par, gamma, contrast, saturation,
         image_path, par, gamma, contrast, saturation,
         sharpen_amount, sharpen_radius, sharpen_threshold,
         filter_name, dither, quant_colors, posterize, snap, median, snap_palette, bg_flatten,
+        direct_sample,
     )
     page = m.convert_image(
         image_path,
         use_hold=True, use_fill=True, use_sep=sep,
-        greedy=greedy, luma=luma, linear=linear, refine=refine,
+        luma=luma, linear=linear,
         smooth=int(smooth),
+        edge_weight=float(edge_weight),
         **kwargs,
     )
 
-    # Processing preview (reuse the already-run pipeline result)
+    # Processing preview — rerun preprocess (kwargs already has direct_sample)
     proc_img = m.preprocess_image(image_path, **kwargs)
     proc_img = proc_img.resize(
         (proc_img.width * _PREVIEW_SCALE, proc_img.height * _PREVIEW_SCALE),
@@ -144,6 +149,23 @@ def convert(image_path, par, gamma, contrast, saturation,
 
 _preprocess_params = None   # filled in after widget creation
 
+_CSS = """
+#controls-col {
+    padding-bottom: 72px !important;
+}
+#action-btns {
+    position: fixed !important;
+    bottom: 0;
+    left: 0;
+    right: 50%;
+    background: var(--background-fill-primary);
+    padding: 8px 16px 12px !important;
+    z-index: 1000;
+    border-top: 1px solid var(--border-color-primary);
+    box-shadow: 0 -2px 6px rgba(0,0,0,0.12);
+}
+"""
+
 with gr.Blocks(title="image2teletext") as demo:
 
     gr.Markdown(
@@ -156,7 +178,7 @@ with gr.Blocks(title="image2teletext") as demo:
     with gr.Row():
 
         # ── Left column: controls ──────────────────────────────────────────
-        with gr.Column(scale=1, min_width=360):
+        with gr.Column(scale=1, min_width=360, elem_id="controls-col"):
 
             image_input = gr.Image(
                 type="filepath", label="Input image",
@@ -182,57 +204,11 @@ with gr.Blocks(title="image2teletext") as demo:
                      "crt: original CRT viewing (PAR 1.22).",
             )
 
-            dither_cb = gr.Checkbox(True,
-                label="Dither  (Floyd-Steinberg error diffusion)",
-                info="Quantises each sub-pixel to the nearest of the 8 Teletext colours, "
-                     "then spreads the colour error to neighbouring pixels. "
-                     "This simulates colours that aren't in the palette — e.g. orange, pink, "
-                     "or dark shades — by mixing adjacent blocks of red/yellow or "
-                     "magenta/red. Works best with natural images and higher saturation.",
-            )
-
             _tv = {**_PRESET_DEFAULTS, **m.PRESETS['tv']}
 
-            with gr.Accordion("Tone & colour", open=True):
-                bg_flatten_s = gr.Slider(
-                    0, 128, value=0, step=1,
-                    label="Background flatten  (0 = off)",
-                    info="Detect the dominant background colour from the image border, "
-                         "then replace all pixels within this Euclidean RGB distance of "
-                         "that colour with the nearest Teletext colour. "
-                         "40 = conservative; 60 = moderate; 80+ = aggressive. "
-                         "Works best on images with a plain, uniform background.",
-                )
-                snap_s = gr.Slider(
-                    0, 128, value=0, step=1,
-                    label="Colour snap tolerance  (0 = off)",
-                    info="Snap pixels within this Euclidean RGB distance of a Teletext "
-                         "palette colour to that colour, before dithering. Reduces "
-                         "ambiguous mid-tones that cause noisy or speckled output. "
-                         "Try 20–40 for subtle snapping; 60–80 for stronger effect.",
-                )
-                quant_s = gr.Slider(
-                    0, 64, value=0, step=1,
-                    label="Palette size  (0 = off)",
-                    info="Pre-quantise to N colours after resize. Reduces colour "
-                         "complexity, producing larger flat regions and a cleaner "
-                         "output. Try 8–16 for photos, 4–8 for graphics.",
-                )
-                snap_palette_cb = gr.Checkbox(False,
-                    label="Snap palette to Teletext colours",
-                    info="After quantising, map every colour region unconditionally "
-                         "to its nearest Teletext colour. Produces smooth flat regions "
-                         "in pure Teletext colours — the 'art palette' look of hand-crafted "
-                         "teletext. Best used with Palette size 4–8. "
-                         "Without a palette size set, snaps every pixel regardless of distance.",
-                )
-                posterize_s = gr.Slider(
-                    0, 7, value=0, step=1,
-                    label="Posterise  (0 = off, bits per channel)",
-                    info="Snap each colour channel to 2^N evenly spaced values before "
-                         "resize. 1 = only 0/255 per channel (8 colours); "
-                         "2 = 4 steps; 3–4 suits most photos. "
-                         "Creates bold flat regions with hard edges.",
+            with gr.Accordion("Image processing", open=True):
+                gr.Markdown(
+                    "Standard image adjustments applied **before** the Teletext solver runs."
                 )
                 gamma_s = gr.Slider(0.2, 4.0, value=_tv['gamma'], step=0.05,
                     label="Gamma  (>1 brightens)",
@@ -249,67 +225,120 @@ with gr.Blocks(title="image2teletext") as demo:
                          "Applied before resize.",
                 )
                 saturation_s = gr.Slider(0.0, 5.0, value=_tv['saturation'], step=0.1,
-                    label="Saturation  (1.5-2.0 recommended)",
+                    label="Saturation  (1.5–2.0 recommended)",
                     info="The Teletext palette is fully saturated — every channel is "
                          "either 0 or 255. Boosting saturation pushes source colours "
                          "toward the palette, reducing dithering artefacts. "
                          "0 = greyscale; 1.0 = unchanged; 1.5–2.0 recommended for photos.",
                 )
-
-            with gr.Accordion("Sharpening & smoothing", open=False):
-                gr.Markdown(
-                    "**Median filter** (smoothing) applied before resize.  "
-                    "**Unsharp mask** (sharpening) applied after resize — Amount 0 = off.  "
-                    "100–200 suits photos; 300+ suits graphics."
-                )
                 median_s = gr.Slider(
                     0, 7, value=0, step=1,
-                    label="Median filter radius  (0 = off · 1 = 3×3 · 2 = 5×5 · 3 = 7×7)",
-                    info="Smooths noise and small colour blobs before resize while preserving "
-                         "hard edges. Better than blur for photos with fine detail. "
-                         "Good for reducing JPEG artefacts and output speckle.",
+                    label="Denoise  (0 = off · 1 = 3×3 · 2 = 5×5 · 3 = 7×7)",
+                    info="Median filter: smooths noise and small colour blobs before resize "
+                         "while preserving hard edges. Better than blur for photos with "
+                         "fine detail. Good for reducing JPEG artefacts and output speckle.",
                 )
                 sharpen_amount_s = gr.Slider(0, 500, value=_tv['sharpen_amount'], step=10,
-                    label="Sharpen amount %",
-                    info="Unsharp mask strength. Pushes pixel values toward channel extremes, "
-                         "improving Teletext palette matching. 0 = off; "
+                    label="Sharpen amount %  (0 = off)",
+                    info="Unsharp mask strength applied after resize. Pushes pixel values "
+                         "toward channel extremes, improving Teletext palette matching. "
                          "100–200 for photos; 300+ for graphics and logos.",
                 )
-                sharpen_radius_s = gr.Slider(0.1, 5.0, value=_tv['sharpen_radius'], step=0.1,
-                    label="Sharpen radius (px)",
-                    info="Spatial extent of the unsharp mask, in sub-pixels. "
-                         "0.5 = sub-pixel edges only; 1.0 = one character cell (recommended); "
-                         "2.0+ widens halos, useful for enhancing broad colour regions.",
-                )
-                sharpen_threshold_s = gr.Slider(0, 20, value=_tv['sharpen_threshold'], step=1,
-                    label="Sharpen threshold (0 = sharpen everywhere)",
-                    info="Minimum per-channel difference before sharpening is applied. "
-                         "0 = sharpen all pixels including smooth gradients; "
-                         "3–10 = skip near-flat areas, avoids amplifying JPEG noise; "
-                         "10–20 = pronounced edges only.",
-                )
+                with gr.Row():
+                    sharpen_radius_s = gr.Slider(0.1, 5.0, value=_tv['sharpen_radius'], step=0.1,
+                        label="Sharpen radius (px)",
+                        info="Spatial extent of the unsharp mask, in sub-pixels. "
+                             "0.5 = sub-pixel edges only; 1.0 = one character cell (recommended); "
+                             "2.0+ widens halos, useful for enhancing broad colour regions.",
+                    )
+                    sharpen_threshold_s = gr.Slider(0, 20, value=_tv['sharpen_threshold'], step=1,
+                        label="Sharpen threshold",
+                        info="Minimum per-channel difference before sharpening is applied. "
+                             "0 = sharpen all pixels including smooth gradients; "
+                             "3–10 = skip near-flat areas, avoids amplifying JPEG noise; "
+                             "10–20 = pronounced edges only.",
+                    )
 
-            with gr.Accordion("Display & resize", open=False):
-                par_s = gr.Slider(
-                    0.5, 2.0, value=1.2, step=0.01,
-                    label="Pixel aspect ratio  (1.2 = LCD TV default · 1.0 = emulator · 1.22 = CRT)",
-                    info="The SAA5050 chip displays characters taller than wide on a real TV. "
-                         "Setting PAR >1 pre-squishes the image horizontally so it looks correct "
-                         "when the display stretches it back. "
-                         "1.2 = modern LCD TV (Ceefax era); 1.22 = original CRT (mathematically derived); "
-                         "1.0 = square pixels, use for emulators.",
+            with gr.Accordion("Teletext palette", open=True):
+                gr.Markdown(
+                    "Controls how colours are reduced to the 8-colour Teletext palette."
                 )
-                filter_dd = gr.Dropdown(
-                    choices=["bilinear", "lanczos", "bicubic", "nearest", "cimg"],
-                    value="bilinear",
-                    label="Resize filter",
-                    info="Resampling method used when scaling the image down to the sub-pixel canvas "
-                         "(78×75 px maximum). Bilinear is fast and smooth; Lanczos is sharper with "
-                         "less ringing; Bicubic is a middle ground; Nearest preserves hard pixel edges; "
-                         "CImg matches the original C++ tool's output exactly.",
+                dither_cb = gr.Checkbox(True,
+                    label="Dither  (Floyd-Steinberg error diffusion)",
+                    info="Quantises each sub-pixel to the nearest of the 8 Teletext colours, "
+                         "then spreads the colour error to neighbouring pixels. "
+                         "Simulates colours not in the palette — e.g. orange, pink, dark shades "
+                         "— by mixing adjacent blocks. Works best with higher saturation.",
                 )
+                bg_flatten_s = gr.Slider(
+                    0, 128, value=0, step=1,
+                    label="Background flatten  (0 = off)",
+                    info="Detect the dominant background colour from the image border, "
+                         "then replace all pixels within this Euclidean RGB distance of "
+                         "that colour with the nearest Teletext colour. "
+                         "40 = conservative; 60 = moderate; 80+ = aggressive. "
+                         "Works best on images with a plain, uniform background.",
+                )
+                quant_s = gr.Slider(
+                    0, 64, value=0, step=1,
+                    label="Palette size  (0 = off)",
+                    info="Pre-quantise to N colours after resize. Reduces colour "
+                         "complexity, producing larger flat regions and a cleaner "
+                         "output. Try 8–16 for photos, 4–8 for graphics.",
+                )
+                snap_s = gr.Slider(
+                    0, 128, value=0, step=1,
+                    label="Colour snap tolerance  (0 = off)",
+                    info="Snap pixels within this Euclidean RGB distance of a Teletext "
+                         "palette colour to that colour, before dithering. Reduces "
+                         "ambiguous mid-tones that cause noisy or speckled output. "
+                         "Try 20–40 for subtle snapping; 60–80 for stronger effect.",
+                )
+                with gr.Row():
+                    snap_palette_cb = gr.Checkbox(False,
+                        label="Snap palette to Teletext colours",
+                        info="After quantising, map every colour region unconditionally "
+                             "to its nearest Teletext colour. Produces smooth flat regions "
+                             "in pure Teletext colours — the 'art palette' look of hand-crafted "
+                             "teletext. Best used with Palette size 4–8.",
+                    )
+                    posterize_s = gr.Slider(
+                        0, 7, value=0, step=1,
+                        label="Posterise  (0 = off, bits per channel)",
+                        info="Snap each colour channel to 2^N evenly spaced values before "
+                             "resize. 1 = only 0/255 per channel (8 colours); "
+                             "2 = 4 steps; 3–4 suits most photos. "
+                             "Creates bold flat regions with hard edges.",
+                    )
 
-            with gr.Accordion("Advanced flags", open=False):
+            with gr.Accordion("Teletext encoding", open=False):
+                gr.Markdown(
+                    "Options specific to the Mode 7 character solver and display target."
+                )
+                with gr.Row():
+                    par_s = gr.Slider(
+                        0.5, 2.0, value=1.2, step=0.01,
+                        label="Pixel aspect ratio",
+                        info="1.2 = modern LCD TV (default); 1.0 = emulator / square pixels; "
+                             "1.22 = original CRT. The SAA5050 displays characters taller than "
+                             "wide on a real TV; PAR > 1 pre-squishes the image so the display "
+                             "stretches it back correctly.",
+                    )
+                    sep_cb = gr.Checkbox(False,
+                        label="Separated graphics",
+                        info="Enable separated graphics mode (--sep). Each sub-pixel block "
+                             "has a 1-pixel gap, giving a more open gridded look. "
+                             "Pairs well with Edge weight > 1 for textured areas.",
+                    )
+                edge_weight_s = gr.Slider(
+                    1.0, 8.0, value=1.0, step=0.5,
+                    label="Edge weight  (1.0 = off · silhouette priority)",
+                    info="Scale the solver error for cells at strong colour boundaries "
+                         "by up to this factor. Prioritises faithful silhouette reproduction "
+                         "at the cost of some accuracy in flat uniform regions. "
+                         "1.0 = off; 2–3 = subtle; 4–5 = strong. "
+                         "Pairs well with Separated graphics.",
+                )
                 smooth_s = gr.Slider(
                     0, 8, value=0, step=1,
                     label="Colour run smoothing  (0 = off)",
@@ -319,45 +348,36 @@ with gr.Blocks(title="image2teletext") as demo:
                          "conversion. 2–3 = subtle; 4–6 = bolder, more hand-drawn.",
                 )
                 with gr.Row():
-                    greedy_cb = gr.Checkbox(False,
-                        label="--greedy  (fast, ~4× speedup)",
-                        info="Use a fast left-to-right greedy solver instead of full dynamic "
-                             "programming. Cannot look ahead, so locally optimal choices may be "
-                             "globally worse. Good for quick previews.",
+                    filter_dd = gr.Dropdown(
+                        choices=["bilinear", "lanczos", "bicubic", "nearest", "cimg"],
+                        value="bilinear",
+                        label="Resize filter",
+                        info="Resampling method for scaling down to the 78×75 sub-pixel canvas. "
+                             "Bilinear = fast and smooth; Lanczos = sharper; "
+                             "Nearest = hard pixel edges; CImg = matches original C++ tool.",
                     )
-                    refine_cb = gr.Checkbox(False,
-                        label="--refine  (local search on top of DP)",
-                        info="After the main solve, re-try every character with all valid "
-                             "alternatives. Accepts any substitution that reduces total error "
-                             "and repeats until convergence. Slow but recovers a few percent "
-                             "of quality.",
+                    direct_sample_cb = gr.Checkbox(False,
+                        label="Direct sample  (Teletext sources)",
+                        info="Bypass bilinear resize (--direct-sample): quantise at full "
+                             "resolution and point-sample at the exact sub-pixel grid. "
+                             "Preserves fine patterns that bilinear resize blurs. "
+                             "Ideal for images that are already Teletext renders.",
                     )
                 with gr.Row():
                     luma_cb = gr.Checkbox(False,
-                        label="--luma  (perceptual error weighting)",
-                        info="Weight colour errors by ITU-R BT.601 luminance "
-                             "(0.299R + 0.587G + 0.114B). Human vision is most sensitive to "
-                             "green and least to blue, so this reduces blue fringing in favour "
-                             "of correct perceived brightness. Pairs well with --linear.",
+                        label="Luma weighting",
+                        info="Weight colour errors by ITU-R BT.601 luminance (--luma). "
+                             "Reduces blue fringing in favour of correct perceived brightness.",
                     )
                     linear_cb = gr.Checkbox(False,
-                        label="--linear  (sRGB linearisation)",
-                        info="Linearise source pixels from sRGB to linear light before computing "
-                             "squared error. Standard images are gamma-encoded (~2.2); computing "
-                             "error in gamma space underweights dark-tone differences. "
-                             "The Teletext palette (0 and 255 per channel) is unchanged.",
-                    )
-                with gr.Row():
-                    sep_cb = gr.Checkbox(False,
-                        label="--sep  (separated graphics)",
-                        info="Enable separated graphics mode. Sub-pixels have a 1-pixel gap "
-                             "between them instead of being contiguous, giving a more open "
-                             "gridded look. Uses a different SAA5050 character set variant. "
-                             "Off by default.",
+                        label="Linear light error",
+                        info="Linearise source pixels from sRGB before computing error (--linear). "
+                             "Corrects for gamma encoding; dark-tone differences are weighted "
+                             "more fairly.",
                     )
 
-            with gr.Row():
-                preview_btn = gr.Button("Preview processing", variant="secondary")
+            with gr.Row(elem_id="action-btns"):
+                preview_btn = gr.Button("Preview preprocessed image", variant="secondary")
                 convert_btn = gr.Button("Convert to Teletext", variant="primary")
 
         # ── Right column: outputs ──────────────────────────────────────────
@@ -389,27 +409,36 @@ with gr.Blocks(title="image2teletext") as demo:
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
         snap_s, quant_s, posterize_s, median_s, snap_palette_cb, bg_flatten_s,
+        edge_weight_s,
     ]
-    preset_dd.change(_apply_preset, inputs=[preset_dd], outputs=_slider_outputs)
-
     # ── Shared input list for preprocessing params ─────────────────────────
     _proc_inputs = [
         image_input,
         par_s, gamma_s, contrast_s, saturation_s,
         sharpen_amount_s, sharpen_radius_s, sharpen_threshold_s,
         filter_dd, dither_cb, quant_s, posterize_s, snap_s, median_s,
-        snap_palette_cb, bg_flatten_s,
+        snap_palette_cb, bg_flatten_s, direct_sample_cb,
     ]
 
     _conv_inputs = _proc_inputs + [
-        greedy_cb, refine_cb, luma_cb, linear_cb, sep_cb, smooth_s,
+        luma_cb, linear_cb, sep_cb, smooth_s, edge_weight_s,
     ]
+
+    # ── Preset → sliders → preview ────────────────────────────────────────
+    preset_dd.change(
+        _apply_preset, inputs=[preset_dd], outputs=_slider_outputs,
+    ).then(
+        preprocess_preview, inputs=_proc_inputs, outputs=[processed_out, output_tabs],
+    )
+
+    _scroll_top_js = "(...args) => { window.scrollTo({top: 0, behavior: 'smooth'}); return args; }"
 
     # ── Preview button ────────────────────────────────────────────────────
     preview_btn.click(
         preprocess_preview,
         inputs=_proc_inputs,
         outputs=[processed_out, output_tabs],
+        js=_scroll_top_js,
     )
 
     # ── Convert button — updates both tabs ───────────────────────────────
@@ -417,6 +446,7 @@ with gr.Blocks(title="image2teletext") as demo:
         convert,
         inputs=_conv_inputs,
         outputs=[processed_out, teletext_out, url_out, bin_out, output_tabs],
+        js=_scroll_top_js,
     )
 
     # ── Auto-update processing preview on image upload ────────────────────
@@ -431,4 +461,4 @@ with gr.Blocks(title="image2teletext") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(css=_CSS)

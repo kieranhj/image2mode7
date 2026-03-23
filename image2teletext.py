@@ -572,6 +572,58 @@ def build_error_table(img, y7, frame_w, luma=False, linear=False):
     return err_table, gfx_table
 
 
+# ---------------------------------------------------------------------------
+# Per-cell saliency weights (silhouette / edge priority)
+# ---------------------------------------------------------------------------
+
+def compute_edge_weights(arr, frame_w, frame_h, edge_weight):
+    """
+    Compute per-cell local-contrast saliency weights.
+    Returns (frame_h, frame_w) float32 array, or None if edge_weight <= 1.0.
+
+    Each cell's weight is proportional to the maximum Euclidean RGB distance
+    between its mean colour and the mean colour of its 4-connected neighbours
+    (left, right, above, below).  High-contrast cells — object/background
+    silhouette edges, colour-region boundaries — get weights up to edge_weight;
+    uniform interior cells get weight 1.0.
+
+    Multiplying the DP error table by these weights makes the solver prioritise
+    faithfully reproducing cells at strong colour edges at the cost of less
+    accuracy in flat, uniform regions.
+    """
+    if edge_weight <= 1.0:
+        return None
+
+    # Cell mean RGB — vectorised reshape avoids a Python loop.
+    # arr is (frame_h*3, frame_w*2, 3); reshape to (frame_h, 3, frame_w, 2, 3)
+    cell_rgb = (arr[:frame_h * 3, :frame_w * 2, :3]
+                .astype(np.float32)
+                .reshape(frame_h, 3, frame_w, 2, 3)
+                .mean(axis=(1, 3)))   # (frame_h, frame_w, 3)
+
+    contrast = np.zeros((frame_h, frame_w), dtype=np.float32)
+
+    # Horizontal neighbours
+    if frame_w > 1:
+        d = cell_rgb[:, 1:] - cell_rgb[:, :-1]       # (frame_h, frame_w-1, 3)
+        dist = np.sqrt((d ** 2).sum(axis=2))          # (frame_h, frame_w-1)
+        contrast[:, :-1] = np.maximum(contrast[:, :-1], dist)
+        contrast[:, 1:]  = np.maximum(contrast[:, 1:],  dist)
+
+    # Vertical neighbours
+    if frame_h > 1:
+        d = cell_rgb[1:] - cell_rgb[:-1]              # (frame_h-1, frame_w, 3)
+        dist = np.sqrt((d ** 2).sum(axis=2))          # (frame_h-1, frame_w)
+        contrast[:-1] = np.maximum(contrast[:-1], dist)
+        contrast[1:]  = np.maximum(contrast[1:],  dist)
+
+    mx = contrast.max()
+    if mx > 0:
+        contrast /= mx    # normalise to [0, 1]
+
+    return (1.0 + (edge_weight - 1.0) * contrast).astype(np.float32)
+
+
 def _candidates(state, use_hold, use_fill, use_sep, gfx_char):
     """Return list of candidate byte values to try at a given state."""
     fg, bg, hold_mode, last_gfx, sep = unpack_state(state)
@@ -1117,16 +1169,42 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
                      quant_colors=0, posterize=0, median=0, snap=0,
-                     snap_palette=False, bg_flatten=0):
+                     snap_palette=False, bg_flatten=0, direct_sample=False):
     """
     Apply tone/colour adjustments, resize to sub-pixel canvas, and sharpening —
     the same pipeline steps that precede the DP solver in convert_image.
     Returns the processed image as a PIL Image at sub-pixel resolution (≤78×75 px).
     Useful for previewing the effect of parameters before running the full conversion.
+
+    direct_sample: if True, bypass bilinear resize.  Instead, quantise the source
+        image to the 8-colour palette at full resolution, then centre-sample it at
+        the exact 78×75 sub-pixel grid positions used by the DP solver.  This
+        preserves fine patterns (e.g. separated graphics) that bilinear resize blurs
+        into grey.  Ideal for images that are already Teletext renders.
     """
     from PIL import ImageEnhance
     img = Image.open(img_path).convert('RGB')
     iw, ih = img.size
+
+    if direct_sample:
+        # Quantise every source pixel to its nearest Teletext palette colour,
+        # then point-sample the quantised image at the 78×75 sub-pixel centres.
+        # SP_COLS=80 across iw pixels; col x in the 78-wide DP grid maps to
+        # sp_col = x+2 (because FRAME_FIRST_COLUMN=1 offsets content by 1 char=2sp).
+        src = np.array(img, dtype=np.float32)
+        flat = src.reshape(-1, 3)
+        dists = np.sum((flat[:, None, :] - _PALETTE_NP[None, :, :]) ** 2, axis=2)
+        cmap = np.argmin(dists, axis=1).reshape(ih, iw).astype(np.uint8)
+        out = np.zeros((MODE7_PIXEL_H, MODE7_PIXEL_W, 3), dtype=np.uint8)
+        sp_cols = MODE7_WIDTH * 2   # 80
+        sp_rows = MODE7_PIXEL_H     # 75
+        for y in range(sp_rows):
+            cy = min(int(round((y + 0.5) * ih / sp_rows)), ih - 1)
+            for x in range(MODE7_PIXEL_W):
+                sp_col = x + 2  # account for FRAME_FIRST_COLUMN=1
+                cx = min(int(round((sp_col + 0.5) * iw / sp_cols)), iw - 1)
+                out[y, x] = COLOR_RGB[cmap[cy, cx]]
+        return Image.fromarray(out)
 
     if gamma != 1.0:
         arr16 = np.array(img, dtype=np.float32) / 255.0
@@ -1250,8 +1328,9 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   filter='bilinear', par=1.2,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
-                  dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0,
-                  snap_palette=False, bg_flatten=0, smooth=0):
+                  dither=False, quant_colors=0, posterize=0, median=0, snap=0,
+                  snap_palette=False, bg_flatten=0, smooth=0, direct_sample=False,
+                  edge_weight=1.0):
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
@@ -1268,10 +1347,11 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     linear: linearise source pixels from sRGB to linear light before computing
          squared error. Corrects for gamma encoding: dark-tone differences are
          weighted more fairly. The Teletext palette (0/255 per channel) is unchanged.
-    refine: run a local-search refinement pass after the solver.  At each position
-         every valid candidate is tried; if substituting it (while re-simulating
-         state forward through the fixed subsequent characters) reduces the total
-         tail error the substitution is accepted.  Repeats until convergence.
+    edge_weight: per-cell saliency weight multiplier (default 1.0 = off).
+         Cells at strong colour/luminance boundaries get their DP error scaled
+         up by up to edge_weight, so the solver prioritises matching silhouette
+         edges at the cost of less accuracy in flat, uniform regions.
+         Recommended range: 2.0–5.0.  Has no effect if <= 1.0.
     """
     preprocessed = preprocess_image(
         img_path, filter=filter, par=par,
@@ -1279,14 +1359,15 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
         sharpen_threshold=sharpen_threshold,
         gamma=gamma, contrast=contrast, saturation=saturation, dither=dither,
         quant_colors=quant_colors, posterize=posterize, median=median, snap=snap,
-        snap_palette=snap_palette, bg_flatten=bg_flatten)
+        snap_palette=snap_palette, bg_flatten=bg_flatten,
+        direct_sample=direct_sample)
     arr = np.array(preprocessed, dtype=np.uint8)
     pw, ph = preprocessed.size
 
     frame_w = pw // 2
     frame_h = ph // 3
 
-    mode_str = ("greedy+refine" if greedy else "DP") + ("+refine" if (refine and not greedy) else "")
+    mode_str = "greedy+refine" if greedy else "DP"
     print(f"Image resized to {pw}x{ph} px -> {frame_w}x{frame_h} chars  [{mode_str}]",
           file=sys.stderr)
 
@@ -1296,11 +1377,17 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
 
     solver = greedy_row if greedy else dp_row
 
+    # Precompute per-cell edge weights (None if edge_weight <= 1.0)
+    cell_weights = compute_edge_weights(arr, frame_w, frame_h, edge_weight)
+
     def _solve_row(y7):
         et, gt = build_error_table(arr, y7, frame_w, luma=luma, linear=linear)
+        if cell_weights is not None:
+            w = cell_weights[y7, :, np.newaxis, np.newaxis, np.newaxis, np.newaxis]
+            et = np.round(et * w).astype(np.int32)
         row = solver(et, gt, frame_w,
                      use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
-        if refine or greedy:   # refine is always applied after greedy; explicit --refine adds it to DP
+        if greedy:
             row = refine_row(row, et, gt, frame_w,
                              use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
         return row
@@ -1622,16 +1709,19 @@ PRESETS = {
     'vivid': dict(
         # High-impact look with punchy colours and strong edge definition.
         # Good for images that need to read clearly at a distance.
+        # Edge weight 2.0 ensures silhouettes are reproduced first.
         saturation=2.5, contrast=1.5,
         sharpen_amount=200, sharpen_radius=1.0,
+        edge_weight=2.0,
     ),
     'graphic': dict(
         # Flat-colour artwork, logos, cartoons, pixel art.
         # Strong sharpening with a tight radius to preserve hard edges;
         # high saturation to snap to palette colours; no threshold so every
-        # edge is enhanced.
+        # edge is enhanced.  Edge weight 3.0 prioritises crisp silhouettes.
         saturation=2.0, contrast=1.5,
         sharpen_amount=300, sharpen_radius=0.5, sharpen_threshold=0,
+        edge_weight=3.0,
     ),
     'flat': dict(
         # Bold, graphic style with deliberately limited colours.
@@ -1658,10 +1748,12 @@ PRESETS = {
         # colours then snap each region unconditionally to the nearest Teletext
         # colour.  Produces smooth colour boundaries rather than per-pixel noise
         # — the hallmark of hand-crafted teletext art.
+        # Edge weight 2.5 reflects the teletext aesthetic: silhouette over detail.
         # Pairs well with --smooth 3 for further run cleanup.
         bg_flatten=60, quant_colors=6, snap_palette=True,
         saturation=2.0, contrast=1.4,
         sharpen_amount=120, sharpen_radius=1.0, sharpen_threshold=3,
+        edge_weight=2.5,
     ),
     'dark': dict(
         # Dark or underexposed source images.
@@ -1700,18 +1792,9 @@ def main():
     parser.add_argument('--sep', action='store_true', help='Enable Separated Graphics mode (experimental)')
     parser.add_argument('--greedy', action='store_true',
                         help='Use fast greedy solver instead of the default full DP solver. '
-                             'Automatically applies the local-search refinement pass, giving '
+                             'Applies a local-search refinement pass after solving, giving '
                              'good quality at ~4× the speed of DP. Useful for quick previews '
                              'or when DP is too slow.')
-    parser.add_argument('--refine', action='store_true',
-                        help='Run a local-search refinement pass after the solver. '
-                             'At each character position every valid candidate is tried; '
-                             'if substituting it while re-simulating the decoder state '
-                             'through the fixed subsequent characters reduces the total '
-                             'tail error the substitution is accepted. '
-                             'Passes repeat until convergence (typically 1-3 passes). '
-                             'Works after both --greedy and the default DP solver. '
-                             'Adds modest extra time per row (O(frame_w² × candidates)).')
     parser.add_argument('--luma', action='store_true',
                         help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
     parser.add_argument('--dither', action='store_true',
@@ -1819,6 +1902,19 @@ def main():
                              '1.5-2.0 = recommended for photographic sources (Teletext palette is '
                              'fully saturated so boosting helps snap colours to the nearest entry); '
                              '3.0+ = vivid/posterised look.')
+    parser.add_argument('--direct-sample', action='store_true', default=False,
+                        help='Bypass bilinear resize: quantise the source image to the 8-colour '
+                             'palette at full resolution, then point-sample it at the exact '
+                             '78×75 sub-pixel grid positions. Preserves separated graphics, '
+                             'fine patterns, and cross-hatch textures that bilinear resize '
+                             'blurs into grey. Ideal for images that are already Teletext renders.')
+    parser.add_argument('--edge-weight', type=float, default=1.0, metavar='W',
+                        help='Silhouette-edge saliency weight (default: 1.0 = off). '
+                             'Cells at strong colour-boundary edges get their DP error scaled '
+                             'up by up to W, making the solver prioritise sharp, faithful '
+                             'silhouette reproduction at the cost of some accuracy in flat '
+                             'uniform regions. Recommended range: 2.0–5.0. '
+                             'Best combined with --bg-flatten or --snap-palette.')
     parser.add_argument('--ssd', metavar='DISK.SSD',
                         help='Add output to a BBC Micro DFS .ssd disk image '
                              '(80-track, created if it does not exist)')
@@ -1870,7 +1966,6 @@ def main():
         saturation=args.saturation,
         linear=args.linear,
         dither=args.dither,
-        refine=args.refine,
         quant_colors=args.quant,
         posterize=args.posterize,
         median=args.median,
@@ -1878,6 +1973,8 @@ def main():
         snap_palette=args.snap_palette,
         bg_flatten=args.bg_flatten,
         smooth=args.smooth,
+        direct_sample=args.direct_sample,
+        edge_weight=args.edge_weight,
     )
 
     # Write binary

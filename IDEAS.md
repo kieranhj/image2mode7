@@ -56,12 +56,16 @@ CONTIG_GFX control codes.  Combining `--sep --edge-weight 3` concentrates sep
 usage at high-contrast boundaries (fur edges, foliage silhouettes) exactly as
 intended.  Explicit local-variance pre-filtering not needed; the DP handles it.
 
-### 6. Held graphics at colour transitions
-When a colour-change control code is needed mid-row it consumes a character cell,
+### ~~6. Held graphics at colour transitions~~ ✓ Already supported
+~~When a colour-change control code is needed mid-row it consumes a character cell,
 producing a gap.  Held graphics mode causes that cell to display the last-seen
 graphics character instead, creating a smooth-seeming transition.  Implementing
 this in the DP/greedy solver would match the technique that skilled artists use
-to avoid visual gaps at mid-row colour changes.
+to avoid visual gaps at mid-row colour changes.~~
+
+**Status:** Hold Graphics is already implemented in the DP solver (enabled by
+default; disable with `--nohold`).  The DP evaluates HOLD_GFX and RELEASE_GFX
+as candidates at every cell and selects them when they reduce error.
 
 ### 7. Subject-area detection for portrait/landscape modes
 Different source images suit different teletext conventions:

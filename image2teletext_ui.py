@@ -131,9 +131,12 @@ def convert(image_path, par, gamma, contrast, saturation,
     edittf = m.to_edittf_url(page)
     zxnet  = m.to_zxnet_url(page)
     _btn = ("display:inline-block;padding:8px 16px;border-radius:6px;font-weight:600;"
-            "text-decoration:none;color:#fff;background:#2563eb;margin-right:8px")
-    url_html = (f'<a href="{edittf}" target="_blank" style="{_btn}">Open in edit.tf</a>'
-                f'<a href="{zxnet}"  target="_blank" style="{_btn}">Open in ZXNet</a>')
+            "text-decoration:none;color:#fff;background:#2563eb;margin-right:8px;"
+            "margin-bottom:6px")
+    url_html = (f'<div style="display:flex;flex-wrap:wrap;gap:0">'
+                f'<a href="{edittf}" target="_blank" style="{_btn}">Open in edit.tf</a>'
+                f'<a href="{zxnet}"  target="_blank" style="{_btn}">Open in ZXNet</a>'
+                f'</div>')
 
     # .bin download
     tmp = tempfile.NamedTemporaryFile(suffix='.bin', delete=False)
@@ -149,7 +152,9 @@ def convert(image_path, par, gamma, contrast, saturation,
 
 _preprocess_params = None   # filled in after widget creation
 
-_CSS = ""
+_CSS = """
+.gradio-container { overflow-x: hidden !important; }
+"""
 
 with gr.Blocks(title="image2teletext") as demo:
 

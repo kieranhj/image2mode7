@@ -431,7 +431,7 @@ with gr.Blocks(title="image2teletext") as demo:
         preprocess_preview, inputs=_proc_inputs, outputs=[processed_out, output_tabs],
     )
 
-    _scroll_top_js = "() => window.scrollTo({top: 0, behavior: 'smooth'})"
+    _scroll_top_js = "(...args) => { window.scrollTo({top: 0, behavior: 'smooth'}); return args; }"
 
     # ── Preview button ────────────────────────────────────────────────────
     preview_btn.click(

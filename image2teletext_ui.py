@@ -431,11 +431,14 @@ with gr.Blocks(title="image2teletext") as demo:
         preprocess_preview, inputs=_proc_inputs, outputs=[processed_out, output_tabs],
     )
 
+    _scroll_top_js = "() => window.scrollTo({top: 0, behavior: 'smooth'})"
+
     # ── Preview button ────────────────────────────────────────────────────
     preview_btn.click(
         preprocess_preview,
         inputs=_proc_inputs,
         outputs=[processed_out, output_tabs],
+        js=_scroll_top_js,
     )
 
     # ── Convert button — updates both tabs ───────────────────────────────
@@ -443,6 +446,7 @@ with gr.Blocks(title="image2teletext") as demo:
         convert,
         inputs=_conv_inputs,
         outputs=[processed_out, teletext_out, url_out, bin_out, output_tabs],
+        js=_scroll_top_js,
     )
 
     # ── Auto-update processing preview on image upload ────────────────────

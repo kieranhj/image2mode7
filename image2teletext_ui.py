@@ -307,13 +307,11 @@ with gr.Blocks(title="image2teletext") as demo:
                              "wide on a real TV; PAR > 1 pre-squishes the image so the display "
                              "stretches it back correctly.",
                     )
-                    filter_dd = gr.Dropdown(
-                        choices=["bilinear", "lanczos", "bicubic", "nearest", "cimg"],
-                        value="bilinear",
-                        label="Resize filter",
-                        info="Resampling method for scaling down to the 78×75 sub-pixel canvas. "
-                             "Bilinear = fast and smooth; Lanczos = sharper; "
-                             "Nearest = hard pixel edges; CImg = matches original C++ tool.",
+                    sep_cb = gr.Checkbox(False,
+                        label="Separated graphics",
+                        info="Enable separated graphics mode (--sep). Each sub-pixel block "
+                             "has a 1-pixel gap, giving a more open gridded look. "
+                             "Pairs well with Edge weight > 1 for textured areas.",
                     )
                 edge_weight_s = gr.Slider(
                     1.0, 8.0, value=1.0, step=0.5,
@@ -333,11 +331,13 @@ with gr.Blocks(title="image2teletext") as demo:
                          "conversion. 2–3 = subtle; 4–6 = bolder, more hand-drawn.",
                 )
                 with gr.Row():
-                    sep_cb = gr.Checkbox(False,
-                        label="Separated graphics",
-                        info="Enable separated graphics mode (--sep). Each sub-pixel block "
-                             "has a 1-pixel gap, giving a more open gridded look. "
-                             "Pairs well with Edge weight > 1 for textured areas.",
+                    filter_dd = gr.Dropdown(
+                        choices=["bilinear", "lanczos", "bicubic", "nearest", "cimg"],
+                        value="bilinear",
+                        label="Resize filter",
+                        info="Resampling method for scaling down to the 78×75 sub-pixel canvas. "
+                             "Bilinear = fast and smooth; Lanczos = sharper; "
+                             "Nearest = hard pixel edges; CImg = matches original C++ tool.",
                     )
                     direct_sample_cb = gr.Checkbox(False,
                         label="Direct sample  (Teletext sources)",

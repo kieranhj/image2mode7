@@ -8,7 +8,7 @@ For each standard-aspect image in test/horsenburger/:
   - Writes gallery.html with side-by-side pairs, match % and sort controls
 """
 
-import pathlib, json, sys, argparse, time, threading, webbrowser
+import pathlib, json, sys, argparse, time, threading, webbrowser, functools
 import http.server
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import numpy as np
@@ -203,9 +203,10 @@ def write_html(results):
 
 def serve(port=8765):
     """Start a simple HTTP server from the repo root and open gallery.html."""
-    import os
-    os.chdir(_ROOT)
-    handler = http.server.SimpleHTTPRequestHandler
+    handler = functools.partial(
+        http.server.SimpleHTTPRequestHandler,
+        directory=str(_ROOT),
+    )
     handler.log_message = lambda *a: None   # silence request log
     server = http.server.HTTPServer(('localhost', port), handler)
     url = f'http://localhost:{port}/gallery/gallery.html'

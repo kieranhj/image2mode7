@@ -8,7 +8,8 @@ For each standard-aspect image in test/horsenburger/:
   - Writes gallery.html with side-by-side pairs, match % and sort controls
 """
 
-import pathlib, json, sys, argparse, time
+import pathlib, json, sys, argparse, time, threading, webbrowser
+import http.server
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 import numpy as np
 from PIL import Image
@@ -200,13 +201,35 @@ def write_html(results):
     print(f'Written {HTML_OUT}  ({len(results)} images)')
 
 
+def serve(port=8765):
+    """Start a simple HTTP server from the repo root and open gallery.html."""
+    import os
+    os.chdir(_ROOT)
+    handler = http.server.SimpleHTTPRequestHandler
+    handler.log_message = lambda *a: None   # silence request log
+    server = http.server.HTTPServer(('localhost', port), handler)
+    url = f'http://localhost:{port}/gallery/gallery.html'
+    print(f'Serving gallery at {url}  (Ctrl-C to stop)')
+    threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+    server.serve_forever()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--limit', type=int, default=0,
                         help='Process only first N images (0 = all)')
     parser.add_argument('--reuse-json', metavar='FILE',
                         help='Skip conversion, load results from existing JSON and just rebuild HTML')
+    parser.add_argument('--serve', action='store_true',
+                        help='Start a local HTTP server and open gallery.html in the browser '
+                             '(needed because file:// blocks cross-directory image loading)')
+    parser.add_argument('--port', type=int, default=8765,
+                        help='Port for --serve (default: 8765)')
     args = parser.parse_args()
+
+    if args.serve:
+        serve(args.port)
+        return
 
     CONV_DIR.mkdir(parents=True, exist_ok=True)
 

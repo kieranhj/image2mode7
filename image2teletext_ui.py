@@ -132,7 +132,7 @@ def convert(image_path, par, gamma, contrast, saturation,
     zxnet  = m.to_zxnet_url(page)
     _btn = ("display:inline-block;padding:8px 16px;border-radius:6px;font-weight:600;"
             "text-decoration:none;color:#fff;background:#2563eb;margin-right:8px;"
-            "margin-bottom:6px")
+            "margin-bottom:6px;white-space:nowrap")
     url_html = (f'<div style="display:flex;flex-wrap:wrap;gap:0">'
                 f'<a href="{edittf}" target="_blank" style="{_btn}">Open in edit.tf</a>'
                 f'<a href="{zxnet}"  target="_blank" style="{_btn}">Open in ZXNet</a>'

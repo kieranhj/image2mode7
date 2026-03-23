@@ -1328,7 +1328,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
                   filter='bilinear', par=1.2,
                   sharpen_radius=0.0, sharpen_amount=0, sharpen_threshold=0,
                   gamma=1.0, contrast=1.0, saturation=1.0, linear=False,
-                  dither=False, refine=False, quant_colors=0, posterize=0, median=0, snap=0,
+                  dither=False, quant_colors=0, posterize=0, median=0, snap=0,
                   snap_palette=False, bg_flatten=0, smooth=0, direct_sample=False,
                   edge_weight=1.0):
     """
@@ -1347,10 +1347,6 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     linear: linearise source pixels from sRGB to linear light before computing
          squared error. Corrects for gamma encoding: dark-tone differences are
          weighted more fairly. The Teletext palette (0/255 per channel) is unchanged.
-    refine: run a local-search refinement pass after the solver.  At each position
-         every valid candidate is tried; if substituting it (while re-simulating
-         state forward through the fixed subsequent characters) reduces the total
-         tail error the substitution is accepted.  Repeats until convergence.
     edge_weight: per-cell saliency weight multiplier (default 1.0 = off).
          Cells at strong colour/luminance boundaries get their DP error scaled
          up by up to edge_weight, so the solver prioritises matching silhouette
@@ -1371,7 +1367,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     frame_w = pw // 2
     frame_h = ph // 3
 
-    mode_str = ("greedy+refine" if greedy else "DP") + ("+refine" if (refine and not greedy) else "")
+    mode_str = "greedy+refine" if greedy else "DP"
     print(f"Image resized to {pw}x{ph} px -> {frame_w}x{frame_h} chars  [{mode_str}]",
           file=sys.stderr)
 
@@ -1391,7 +1387,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
             et = np.round(et * w).astype(np.int32)
         row = solver(et, gt, frame_w,
                      use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
-        if refine or greedy:   # refine is always applied after greedy; explicit --refine adds it to DP
+        if greedy:
             row = refine_row(row, et, gt, frame_w,
                              use_hold=use_hold, use_fill=use_fill, use_sep=use_sep)
         return row
@@ -1796,18 +1792,9 @@ def main():
     parser.add_argument('--sep', action='store_true', help='Enable Separated Graphics mode (experimental)')
     parser.add_argument('--greedy', action='store_true',
                         help='Use fast greedy solver instead of the default full DP solver. '
-                             'Automatically applies the local-search refinement pass, giving '
+                             'Applies a local-search refinement pass after solving, giving '
                              'good quality at ~4× the speed of DP. Useful for quick previews '
                              'or when DP is too slow.')
-    parser.add_argument('--refine', action='store_true',
-                        help='Run a local-search refinement pass after the solver. '
-                             'At each character position every valid candidate is tried; '
-                             'if substituting it while re-simulating the decoder state '
-                             'through the fixed subsequent characters reduces the total '
-                             'tail error the substitution is accepted. '
-                             'Passes repeat until convergence (typically 1-3 passes). '
-                             'Works after both --greedy and the default DP solver. '
-                             'Adds modest extra time per row (O(frame_w² × candidates)).')
     parser.add_argument('--luma', action='store_true',
                         help='Use perceptual luminance weighting (ITU-R BT.601) for error metric')
     parser.add_argument('--dither', action='store_true',
@@ -1979,7 +1966,6 @@ def main():
         saturation=args.saturation,
         linear=args.linear,
         dither=args.dither,
-        refine=args.refine,
         quant_colors=args.quant,
         posterize=args.posterize,
         median=args.median,

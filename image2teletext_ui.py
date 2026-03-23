@@ -95,7 +95,7 @@ def convert(image_path, par, gamma, contrast, saturation,
             sharpen_amount, sharpen_radius, sharpen_threshold,
             filter_name, dither, quant_colors, posterize, snap, median,
             snap_palette, bg_flatten, direct_sample,
-            greedy, refine, luma, linear, sep, smooth, edge_weight):
+            luma, linear, sep, smooth, edge_weight):
     if image_path is None:
         raise gr.Error("Upload an image first.")
 
@@ -108,7 +108,7 @@ def convert(image_path, par, gamma, contrast, saturation,
     page = m.convert_image(
         image_path,
         use_hold=True, use_fill=True, use_sep=sep,
-        greedy=greedy, luma=luma, linear=linear, refine=refine,
+        luma=luma, linear=linear,
         smooth=int(smooth),
         edge_weight=float(edge_weight),
         **kwargs,
@@ -347,18 +347,6 @@ with gr.Blocks(title="image2teletext") as demo:
                              "Ideal for images that are already Teletext renders.",
                     )
                 with gr.Row():
-                    greedy_cb = gr.Checkbox(False,
-                        label="Greedy solver  (~4× faster)",
-                        info="Use a fast left-to-right greedy solver (--greedy) instead of "
-                             "full dynamic programming. Good for quick previews.",
-                    )
-                    refine_cb = gr.Checkbox(False,
-                        label="Refine  (local search after DP)",
-                        info="After the main solve, re-try every character with all valid "
-                             "alternatives and accept improvements until convergence (--refine). "
-                             "Slow but recovers a few percent of quality.",
-                    )
-                with gr.Row():
                     luma_cb = gr.Checkbox(False,
                         label="Luma weighting",
                         info="Weight colour errors by ITU-R BT.601 luminance (--luma). "
@@ -418,7 +406,7 @@ with gr.Blocks(title="image2teletext") as demo:
     ]
 
     _conv_inputs = _proc_inputs + [
-        greedy_cb, refine_cb, luma_cb, linear_cb, sep_cb, smooth_s, edge_weight_s,
+        luma_cb, linear_cb, sep_cb, smooth_s, edge_weight_s,
     ]
 
     # ── Preview button ────────────────────────────────────────────────────

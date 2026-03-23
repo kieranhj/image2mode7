@@ -1713,16 +1713,19 @@ PRESETS = {
     'vivid': dict(
         # High-impact look with punchy colours and strong edge definition.
         # Good for images that need to read clearly at a distance.
+        # Edge weight 2.0 ensures silhouettes are reproduced first.
         saturation=2.5, contrast=1.5,
         sharpen_amount=200, sharpen_radius=1.0,
+        edge_weight=2.0,
     ),
     'graphic': dict(
         # Flat-colour artwork, logos, cartoons, pixel art.
         # Strong sharpening with a tight radius to preserve hard edges;
         # high saturation to snap to palette colours; no threshold so every
-        # edge is enhanced.
+        # edge is enhanced.  Edge weight 3.0 prioritises crisp silhouettes.
         saturation=2.0, contrast=1.5,
         sharpen_amount=300, sharpen_radius=0.5, sharpen_threshold=0,
+        edge_weight=3.0,
     ),
     'flat': dict(
         # Bold, graphic style with deliberately limited colours.
@@ -1749,10 +1752,12 @@ PRESETS = {
         # colours then snap each region unconditionally to the nearest Teletext
         # colour.  Produces smooth colour boundaries rather than per-pixel noise
         # — the hallmark of hand-crafted teletext art.
+        # Edge weight 2.5 reflects the teletext aesthetic: silhouette over detail.
         # Pairs well with --smooth 3 for further run cleanup.
         bg_flatten=60, quant_colors=6, snap_palette=True,
         saturation=2.0, contrast=1.4,
         sharpen_amount=120, sharpen_radius=1.0, sharpen_threshold=3,
+        edge_weight=2.5,
     ),
     'dark': dict(
         # Dark or underexposed source images.

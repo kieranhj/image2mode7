@@ -1165,6 +1165,15 @@ def _cimg_nearest_resize(arr, dst_w, dst_h):
     return arr[np.ix_(ys, xs)]
 
 
+def _coerce_to_pil(src):
+    # Accept a path, a PIL.Image, or an HxWx3 uint8 numpy array.
+    if isinstance(src, Image.Image):
+        return src.convert('RGB')
+    if isinstance(src, np.ndarray):
+        return Image.fromarray(src.astype(np.uint8)).convert('RGB')
+    return Image.open(src).convert('RGB')
+
+
 def preprocess_image(img_path, filter='bilinear', par=1.2,
                      sharpen_radius=1.0, sharpen_amount=0, sharpen_threshold=0,
                      gamma=1.0, contrast=1.0, saturation=1.0, dither=False,
@@ -1176,6 +1185,8 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
     Returns the processed image as a PIL Image at sub-pixel resolution (≤78×75 px).
     Useful for previewing the effect of parameters before running the full conversion.
 
+    img_path: file path, PIL.Image, or HxWx3 uint8 numpy array.
+
     direct_sample: if True, bypass bilinear resize.  Instead, quantise the source
         image to the 8-colour palette at full resolution, then centre-sample it at
         the exact 78×75 sub-pixel grid positions used by the DP solver.  This
@@ -1183,7 +1194,7 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         into grey.  Ideal for images that are already Teletext renders.
     """
     from PIL import ImageEnhance
-    img = Image.open(img_path).convert('RGB')
+    img = _coerce_to_pil(img_path)
     iw, ih = img.size
 
     if direct_sample:
@@ -1334,6 +1345,7 @@ def convert_image(img_path, use_hold=True, use_fill=True, use_sep=False, greedy=
     """
     Load image, resize to fit 40x25 Mode 7 grid, encode each row.
     Returns a bytearray of 1000 bytes (MODE7_WIDTH * MODE7_HEIGHT).
+    img_path: file path, PIL.Image, or HxWx3 uint8 numpy array.
     greedy: use fast greedy solver instead of the default full DP solver.
     par: pixel aspect ratio (sub-pixel width / height on display).
          1.0 = square pixels (emulator); 1.2 = LCD TV; 1.22 = CRT TV.
@@ -1781,6 +1793,23 @@ PRESETS = {
         sharpen_amount=150, sharpen_radius=1.0, sharpen_threshold=3,
     ),
 }
+
+
+def convert(image, preset=None, **overrides):
+    """
+    High-level Python API: image -> 1000-byte Mode 7 page (as `bytes`).
+
+    image: file path, PIL.Image, or HxWx3 uint8 numpy array.
+    preset: name from PRESETS, or None for the bare defaults.
+    **overrides: any convert_image() keyword arg; takes precedence over the preset.
+
+    Example:
+        from image2teletext import convert
+        page = convert(pil_img, preset='art')
+    """
+    kwargs = dict(PRESETS[preset]) if preset else {}
+    kwargs.update(overrides)
+    return bytes(convert_image(image, **kwargs))
 
 
 def main():

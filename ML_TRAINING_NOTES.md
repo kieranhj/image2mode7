@@ -627,6 +627,50 @@ The decision criteria from §7:
   framing is wrong. Check that `convert()` outputs round-trip through
   `teletext_decode.py` byte-identical first.
 
+### Progress log
+
+- **Step 0 (Modal setup)** — done. Client `1.4.2` installed, authenticated to
+  the `kieranhj` workspace, token at `~/.modal.toml`.
+- **Step 1 (shared image + volume)** — done. `modal_jobs/verify.py` runs
+  end-to-end: image cached (`torch 2.5.1+cu124`, `transformers 4.46.3`),
+  `teletext-m1` Volume created and round-tripped, `image2teletext` /
+  `teletext_decode` import cleanly inside the container. App URL pattern:
+  `https://modal.com/apps/kieranhj/main/<run-id>`.
+
+  Convention changes from the original §9 plan that future steps must
+  inherit (see `memory/reference_modal_setup.md` for full rationale):
+    - Job dir is `modal_jobs/`, not `modal/` (avoids shadowing the modal
+      pip package).
+    - Each script **inlines** its own `image` / `volume` / `app` definition;
+      no shared `app.py`. Modal re-imports the entrypoint inside the
+      container, so cross-script imports break server-side.
+    - Image mounts list specific files, never `add_local_dir(REPO_ROOT)` —
+      the repo is ~700 MB and the user has ~3 Mb/s upload.
+    - Run via `./modal.bat run modal_jobs/<script>.py` from the repo root
+      (the wrapper sets `PYTHONUTF8=1` so the CLI's Unicode output
+      doesn't crash the Windows console).
+    - Cast non-trivial return values to plain types before returning
+      (e.g. `str(torch.__version__)`) so the laptop can unpickle them
+      without needing the same packages installed.
+
+### Next steps (resume here)
+
+- **Step 2 — `prep_gold`**. New file `modal_jobs/prep_gold.py`. Inline the
+  same image+volume boilerplate as `verify.py`. Function should:
+    1. Set `GALLERY_OUT_DIR=/data/horsenburger` so
+       `download_gallery.py` writes to the volume (already wired up in
+       `gallery/download_gallery.py`).
+    2. Run the downloader (it skips already-present files, so re-runs are
+       cheap).
+    3. Iterate the PNGs in `/data/horsenburger`, decode each via
+       `teletext_decode.decode_image_to_bytes`, write
+       `/data/gold.npz` with arrays `bytes` (N×1000 uint8) and `names`
+       (N strings).
+    4. `volume.commit()` and return counts.
+  Expected: ~15 min wall, ~$0.10. All bandwidth is modal→horsenburger,
+  none from the laptop.
+- **Step 3 — `prep_silver`**. Then training, sampling, eval as in §9.
+
 ### Total budget summary
 
 | Step | Resource | Wall time | Cost |

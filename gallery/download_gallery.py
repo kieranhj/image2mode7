@@ -3,7 +3,10 @@ import time, urllib.request, pathlib, sys, os
 
 _HERE     = pathlib.Path(__file__).parent
 URLS_FILE = _HERE / 'gallery_urls.txt'
-OUT_DIR   = _HERE.parent / 'test/horsenburger'
+# GALLERY_OUT_DIR overrides the default destination — used by Modal to write
+# into the persistent /data volume instead of the ephemeral container tree.
+OUT_DIR   = pathlib.Path(os.environ.get('GALLERY_OUT_DIR',
+                                        _HERE.parent / 'test/horsenburger'))
 DELAY     = 0.2   # seconds between requests
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)

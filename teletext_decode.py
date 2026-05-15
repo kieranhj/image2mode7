@@ -281,28 +281,143 @@ def decode_image(img_path):
 # Render decoded bytes back to PNG for comparison
 # ---------------------------------------------------------------------------
 
-def render_bytes(page_bytes, out_w=640, out_h=480):
-    """
-    Render a 1000-byte Mode 7 page to an RGB image at the requested dimensions.
-    Uses the same fractional sub-pixel grid as the decoder, so comparisons are
-    apples-to-apples when out_w/out_h match the source image dimensions.
+# ---------------------------------------------------------------------------
+# Alpha character glyphs (loaded lazily from teletext2.ttf)
+# ---------------------------------------------------------------------------
+
+ALPHA_CELL_W = 12
+ALPHA_CELL_H = 20
+RENDER_W = N_COLS * ALPHA_CELL_W   # 480
+RENDER_H = N_ROWS * ALPHA_CELL_H   # 500
+
+_FONT_PATH = pathlib.Path(__file__).parent / "datasets" / "teletext_assets" / "teletext2.ttf"
+_ALPHA_GLYPHS: dict[int, np.ndarray] | None = None
+
+
+def _load_alpha_glyphs() -> dict[int, np.ndarray]:
+    """Rasterise alpha characters (0x20-0x7F) from teletext2.ttf into 12x20
+    boolean bitmaps. Cached after first call. Returns {} if the font is missing."""
+    global _ALPHA_GLYPHS
+    if _ALPHA_GLYPHS is not None:
+        return _ALPHA_GLYPHS
+    if not _FONT_PATH.exists():
+        _ALPHA_GLYPHS = {}
+        return _ALPHA_GLYPHS
+
+    from PIL import ImageFont, ImageDraw
+    # Find the size where one character spans ~12x20. The teletext fonts use
+    # a fixed character cell, so a single binary search nails it.
+    target_w, target_h = ALPHA_CELL_W, ALPHA_CELL_H
+    chosen_size = target_h
+    for size in range(target_h, target_h + 12):
+        try:
+            font = ImageFont.truetype(str(_FONT_PATH), size=size)
+            bbox = font.getbbox("M")
+            w = bbox[2] - bbox[0]
+            if w >= target_w:
+                chosen_size = size
+                break
+        except Exception:
+            continue
+    font = ImageFont.truetype(str(_FONT_PATH), size=chosen_size)
+
+    glyphs: dict[int, np.ndarray] = {}
+    canvas_w, canvas_h = target_w * 2, target_h * 2
+    for byte in range(0x20, 0x7F + 1):
+        img = Image.new("L", (canvas_w, canvas_h), 0)
+        draw = ImageDraw.Draw(img)
+        draw.text((0, 0), chr(byte), fill=255, font=font)
+        arr = np.array(img) > 127
+        # Locate inked pixels and centre them in a target_h x target_w cell
+        ys, xs = np.where(arr)
+        out = np.zeros((target_h, target_w), dtype=bool)
+        if len(xs):
+            x_off = max(0, (xs.min() + xs.max() + 1) // 2 - target_w // 2)
+            y_off = max(0, (ys.min() + ys.max() + 1) // 2 - target_h // 2)
+            cropped = arr[y_off:y_off + target_h, x_off:x_off + target_w]
+            ch, cw = cropped.shape
+            out[:ch, :cw] = cropped
+        glyphs[byte] = out
+    _ALPHA_GLYPHS = glyphs
+    return _ALPHA_GLYPHS
+
+
+# ---------------------------------------------------------------------------
+# Render
+# ---------------------------------------------------------------------------
+
+def _paint_cell_alpha(out, row, col, byte, fg_idx, bg_idx, glyphs):
+    y0 = row * ALPHA_CELL_H
+    x0 = col * ALPHA_CELL_W
+    fg = PALETTE_RGB[fg_idx].astype(np.uint8)
+    bg = PALETTE_RGB[bg_idx].astype(np.uint8)
+    glyph = glyphs.get(byte)
+    if glyph is None:
+        out[y0:y0 + ALPHA_CELL_H, x0:x0 + ALPHA_CELL_W] = bg
+        return
+    out[y0:y0 + ALPHA_CELL_H, x0:x0 + ALPHA_CELL_W] = np.where(
+        glyph[..., None], fg, bg
+    )
+
+
+def _paint_cell_gfx(out, row, col, byte, fg_idx, bg_idx, sep):
+    y0 = row * ALPHA_CELL_H
+    x0 = col * ALPHA_CELL_W
+    cx = ALPHA_CELL_W // 2
+    cy1 = round(ALPHA_CELL_H * 1 / 3)
+    cy2 = round(ALPHA_CELL_H * 2 / 3)
+    sp_y = [(0, cy1), (cy1, cy2), (cy2, ALPHA_CELL_H)]
+    sp_x = [(0, cx), (cx, ALPHA_CELL_W)]
+    for sr, (yy0, yy1) in enumerate(sp_y):
+        for sc, (xx0, xx1) in enumerate(sp_x):
+            sixel_idx = sr * 2 + sc
+            mask = GFX_PIXEL_BITS[sixel_idx]
+            is_set = bool(byte & mask)
+            if is_set and sep:
+                f = SEP_FG_FACTOR
+                colour = ((f * PALETTE_RGB[fg_idx]
+                           + (255 - f) * PALETTE_RGB[bg_idx]) / 255).astype(np.uint8)
+            else:
+                colour = PALETTE_RGB[fg_idx if is_set else bg_idx].astype(np.uint8)
+            out[y0 + yy0:y0 + yy1, x0 + xx0:x0 + xx1] = colour
+
+
+def _paint_cell_solid(out, row, col, colour_idx):
+    y0 = row * ALPHA_CELL_H
+    x0 = col * ALPHA_CELL_W
+    out[y0:y0 + ALPHA_CELL_H, x0:x0 + ALPHA_CELL_W] = (
+        PALETTE_RGB[colour_idx].astype(np.uint8)
+    )
+
+
+def render_bytes(page_bytes, out_w=None, out_h=None):
+    """Render a 1000-byte Mode 7 page to an RGB image.
+
+    Renders internally at the canonical 480x500 (12x20 px per cell), then
+    optionally resizes to (out_w, out_h) via PIL nearest-neighbour. If
+    out_w/out_h are None, the canonical size is returned.
+
+    Tracks alpha vs graphics mode per row so that text-heavy broadcast pages
+    render their alphanumeric content via the teletext2.ttf font glyphs;
+    graphics-mode cells still use the 2x3 sub-pixel grid.
 
     Returns a PIL Image.
     """
-    px_per_sp_col = out_w / SP_COLS
-    px_per_sp_row = out_h / SP_ROWS
-    out = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+    glyphs = _load_alpha_glyphs()
+    out = np.zeros((RENDER_H, RENDER_W, 3), dtype=np.uint8)
 
     for row in range(N_ROWS):
-        cur_fg   = 7    # white
-        cur_bg   = 0    # black
-        cur_sep  = False  # contiguous graphics by default
-        hold     = False
-        last_gfx = 0x20  # space (all-off)
+        cur_fg = 7
+        cur_bg = 0
+        cur_sep = False
+        gfx_mode = False  # spec: rows start in alpha mode
+        hold = False
+        last_gfx = 0x20
+
         for col in range(N_COLS):
             b = page_bytes[row * N_COLS + col]
 
-            # --- Set-At control codes (take effect at this cell) ---
+            # --- Set-At control codes ---
             if b == M7_NEW_BG:
                 cur_bg = cur_fg
             elif b == M7_BLACK_BG:
@@ -313,65 +428,46 @@ def render_bytes(page_bytes, out_w=640, out_h=480):
                 hold = False
                 last_gfx = 0x20
 
-            # --- Determine what is displayed at this cell ---
-            if 0x91 <= b <= 0x97:
-                # Graphics colour control: shows bg colour (control cell)
-                display_byte = 0x20
-                fg_col = cur_bg
-                bg_col = cur_bg
-                disp_sep = False
-            elif b in (M7_NEW_BG, M7_BLACK_BG, M7_HOLD_GFX, M7_RELEASE_GFX,
-                       M7_SEP_GFX, M7_CONTIG_GFX):
-                # Control codes: show held gfx or blank
-                display_byte = last_gfx if hold else 0x20
-                fg_col = cur_fg
-                bg_col = cur_bg
-                disp_sep = cur_sep
-            elif is_gfx_byte(b):
-                display_byte = b
-                fg_col = cur_fg
-                bg_col = cur_bg
-                disp_sep = cur_sep
+            is_alpha_colour = 0x81 <= b <= 0x87
+            is_gfx_colour = 0x91 <= b <= 0x97
+            is_other_control = b in (M7_NEW_BG, M7_BLACK_BG, M7_HOLD_GFX,
+                                     M7_RELEASE_GFX, M7_SEP_GFX, M7_CONTIG_GFX)
+
+            # --- Paint this cell ---
+            if is_alpha_colour or is_gfx_colour or is_other_control \
+                    or (b < 0x20) or (0x80 <= b <= 0x9F):
+                # Control / spacing cell: show held gfx (if hold and gfx mode)
+                # or background colour.
+                if hold and gfx_mode:
+                    _paint_cell_gfx(out, row, col, last_gfx,
+                                    cur_fg, cur_bg, cur_sep)
+                else:
+                    _paint_cell_solid(out, row, col, cur_bg)
+            elif gfx_mode and is_gfx_byte(b):
+                _paint_cell_gfx(out, row, col, b, cur_fg, cur_bg, cur_sep)
+                last_gfx = b
             else:
-                # Unknown / alpha character — show as background
-                display_byte = last_gfx if hold else 0x20
-                fg_col = cur_fg
-                bg_col = cur_bg
-                disp_sep = cur_sep
+                # Alpha mode (or any non-gfx printable): use the font glyph
+                _paint_cell_alpha(out, row, col, b, cur_fg, cur_bg, glyphs)
 
-            # --- Paint the 6 sub-pixels ---
-            for sr in range(3):
-                for sc in range(2):
-                    sixel_idx = sr * 2 + sc
-                    mask = GFX_PIXEL_BITS[sixel_idx]
-                    is_set = bool(display_byte & mask)
-                    if is_set and disp_sep:
-                        # Separated mode: blend fg with bg (≈50% coverage)
-                        f = SEP_FG_FACTOR
-                        fg_rgb = PALETTE_RGB[fg_col]
-                        bg_rgb = PALETTE_RGB[bg_col]
-                        colour = ((f * fg_rgb + (255 - f) * bg_rgb) / 255).astype(np.uint8)
-                    else:
-                        colour = PALETTE_RGB[fg_col if is_set else bg_col].astype(np.uint8)
-                    sp_r = row * 3 + sr
-                    sp_c = col * 2 + sc
-                    py0 = int(round(sp_r * px_per_sp_row))
-                    py1 = int(round((sp_r + 1) * px_per_sp_row))
-                    px0 = int(round(sp_c * px_per_sp_col))
-                    px1 = int(round((sp_c + 1) * px_per_sp_col))
-                    out[py0:py1, px0:px1] = colour
-
-            # --- Set-After control codes (take effect from next cell) ---
-            if 0x91 <= b <= 0x97:
+            # --- Set-After mode/colour transitions ---
+            if is_alpha_colour:
+                cur_fg = b - 0x80
+                gfx_mode = False
+            elif is_gfx_colour:
                 cur_fg = b - 0x90
+                gfx_mode = True
+
             if b == M7_SEP_GFX:
                 cur_sep = True
             elif b == M7_CONTIG_GFX:
                 cur_sep = False
-            if is_gfx_byte(b):
-                last_gfx = b
 
-    return Image.fromarray(out)
+    img = Image.fromarray(out)
+    if out_w is not None and out_h is not None \
+            and (out_w, out_h) != (RENDER_W, RENDER_H):
+        img = img.resize((out_w, out_h), Image.NEAREST)
+    return img
 
 
 # ---------------------------------------------------------------------------

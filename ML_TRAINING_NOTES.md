@@ -90,6 +90,118 @@ rectangles, gradients, simple silhouettes, text — to teach the model the
 control-code grammar before exposing it to messy natural images. ~50k of these
 costs nothing.
 
+### 2e. Current on-disk inventory
+
+Datasets actually fetched, under `datasets/`. Strategic tier (gold / silver /
+bronze) is per §2a-d; "format" is what the file actually is, not what the
+training pipeline ultimately consumes.
+
+| Path | Source | Format | Count | Tier | Purpose |
+|---|---|---|---|---|---|
+| `datasets/16colors_teletext/images/` | [16colo.rs](https://16colo.rs/tags/content/teletext) `tags/content/teletext` | PNG/GIF renders | 2,983 | gold (authored, source) | Hand-authored Mode 7 art, pixel-exact renders of artists' teletext intent. The "what good teletext looks like" corpus. |
+| `datasets/16colors_teletext/pages/` | decoded from `images/` via `decode_16colors_to_bytes.py` | 1000-byte BBC Mode 7 | 2,980 | gold (authored) | Decoder is graphics-only, so any text portions are reconstructed as approximate graphics. JPEG sources add quantisation noise. Use these for the "graphics aesthetic" half of the corpus, not text-heavy authored pages. |
+| `datasets/teletextart/pages/` | teletextart.co.uk `dan.zip` (Jason Robertson archive) | 1000-byte BBC Mode 7 | 4,301 | gold (broadcast) | Real UK broadcast teletext (BBC1, GMTV, Sky One, TCC, TVAM, 1991-93), already in our pipeline's target byte format (control codes 0x80–0x9F). Bytes are byte-exact ground truth; rendered images are noisy (VHS recoveries). Use as direct supervision for byte-level decoder. |
+| `datasets/teletextart/dan/**/*.t42` | dan.zip | T42 packet stream | 18 streams | source | Raw broadcast captures backing the pages above. Reprocess with `teletext` CLI (`pip install git+https://github.com/ali1234/vhs-teletext`) for alternative recoveries — sometimes finds pages a single squash misses. |
+| `datasets/computer_legacy/zips/` | [computer-legacy.com](https://computer-legacy.com/teletext.html) (Steve Horsley archive) | T42 streams (zipped) | 104 zips, 38 MB | source | High-quality VHS recoveries with **5-star quality ratings** in the catalogue. Filtered to 4-5★ + all hand-finalised. Mostly UK broadcast 1990s-2000s (BBC1/2, C4, ITV regions, Sky). Each zip = one capture (15 min - 3 h). |
+| `datasets/computer_legacy/pages/` | extracted from `zips/` via `extract_t42_pages.py` | 1000-byte BBC Mode 7 | 108,108 pages | gold (broadcast) | Largest byte-stream corpus we have. Extracted using the `teletext` library's proper Hamming-decoded pagination. Includes lots of subpage variants and intra-corpus duplicates (page 100 appears in many recoveries) — dedup by sha256 before training. |
+| `datasets/teletext_assets/` | [al.zerostem.io](https://al.zerostem.io/~al/teletext/) | CSS + TTF | 13 files | tooling | Canonical teletext rendering assets (Alistair Buxton's set). Drop alongside `teletext html` output for visual verification of byte streams. Note: `.row{display:block}` patch needed in `teletext.css` because the `teletext html` CLI emits `<span class="row">` without newline separators. |
+
+Companion to the strategic tiers in §2a–d:
+
+- **Authored gold (16colo.rs)** is the cleanest signal for "Mode 7 aesthetics"
+  but only ~3k pages, biased toward graphics-heavy art (portraits, scenes)
+  rather than typical broadcast layouts.
+- **Broadcast gold (dan.zip pages)** is 4× larger and gives us text-heavy
+  pages with menus, navigation, and the canonical magazine structure — but
+  has VHS-recovery corruption baked into the bytes.
+- **Together** they cover the two ends of the teletext distribution:
+  artistic-graphical and informational-textual.
+
+Planned additions (not yet fetched):
+
+- al.zerostem.io: `0047.0.d.t42.xz` (~9.6 MB compressed), `0047.0.s.t42.xz`
+  (squashed), `bbc1-1.s.t42` (1.2 MB), `some-random-pages.zip` (12 MB).
+  Likely yields several thousand more broadcast pages once decoded.
+- The ~73 dated edition folders on archive.teletextart.co.uk (HTML format,
+  parseable via the `f0–f7 b0–b7 dh nx` CSS-class scheme). Lower priority —
+  more effort to parse and likely overlaps with dan.zip content.
+
+### 2f. Pickup notes (next session)
+
+Current state: **~115,389 byte-stream pages** on disk across three sources
+(authored 16colo.rs, broadcast dan.zip, broadcast computer-legacy). The
+renderer in `teletext_decode.py` was extended to handle alpha characters
+via `teletext2.ttf` glyphs, so byte streams now render legibly for both
+graphics-heavy authored art and text-heavy broadcast pages.
+
+**Resume here, in order:**
+
+1. **Fetch al.zerostem.io raw files** (~25 minutes, ~23 MB).
+   - `curl` the four files: `0047.0.d.t42.xz`, `0047.0.s.t42.xz`,
+     `bbc1-1.s.t42`, `some-random-pages.zip` from `https://al.zerostem.io/~al/teletext/`
+   - Decompress the `.xz` files (`xz -d`).
+   - Run `extract_t42_pages.py --in-dir datasets/al_zerostem/zips --out
+     datasets/al_zerostem/pages` after wrapping the loose `.t42` files in
+     zips (or extend `extract_t42_pages.py` to accept loose `.t42` too).
+   - `some-random-pages.zip` may have a different internal layout; probe
+     before processing.
+
+2. **Phase 3: Consolidate the byte corpus.** The four sources currently live
+   in their own directories with inconsistent filename conventions and
+   provenance schemas. Build a single unified corpus:
+   - One directory `datasets/corpus/pages/` containing every 1000-byte page,
+     filename `<sha256[:16]>.bin`.
+   - Master manifest `datasets/corpus/manifest.json` keyed by sha256, recording
+     every source filename, provenance (source dataset, channel, date, rating,
+     etc.), and quality tier.
+   - Sha256 dedup will collapse the 108k computer-legacy pages dramatically
+     (page 100 from many BBC1 captures will repeat). Expect 30-50k unique
+     pages after dedup.
+
+3. **Phase 3b: Quality split.** Tag each page in the manifest with a
+   coarse quality tier:
+   - `gold-authored`: 16colo.rs decoded pages (artist intent, but lossy
+     decoder output)
+   - `gold-finalised`: computer-legacy `kind=finalised` pages (hand-edited)
+   - `gold-broadcast`: computer-legacy 4-5★ + dan.zip pages
+   - `silver-broadcast`: computer-legacy 3★ pages
+   - Drop anything that fails sanity checks (e.g. all-zeros, all-spaces,
+     no displayable rows).
+
+4. **Phase 3c: Visual sanity-check at scale.** Render N=100 random pages
+   from each tier into a contact-sheet HTML page using the new
+   alpha-aware `render_bytes`. Helps catch any source-specific decoding
+   bugs (e.g. EBU vs BBC control code conversion errors) before training.
+
+5. **Phase 4: Renderer polish (optional).** Two small extensions when
+   needed:
+   - **Double-height (DH, 0x8D)**: spec says affected cell and the cell
+     directly below render at 2x vertical font scale, with the row below
+     blank. Currently single-height — affects header/title rows. ~30 lines.
+   - **Flash (0x88) / conceal (0x98)**: visual indicators in static renders.
+     Low priority unless used for training.
+
+6. **Phase 5 (the actual project): connect to training story.**
+   - Decide on framing: pure byte-stream language model first (sequence-only
+     pretraining on the corpus, no image conditioning), then add image
+     conditioning. OR jump straight to image-conditioned per §3-§9.
+   - Generate input photos: render+augment for the autoencoder pretrain task,
+     plus a real-photo corpus for the photo→teletext task (silver via solver).
+   - Modal pipeline (§9): `prep_corpus` (new), `prep_silver`, `train`,
+     `sample`, `eval`. The `prep_gold` from §9 step 2 is replaced by reading
+     from `datasets/corpus/`.
+
+**Tools/scripts already in place:**
+
+| Script | What it does |
+|---|---|
+| `scrape_16colors_teletext.py` | Per-pack zip scrape from 16colo.rs (already run; cached zips in `datasets/16colors_teletext/zips/`) |
+| `decode_16colors_to_bytes.py` | PNG/GIF → 1000-byte page via existing decoder |
+| `dan_to_pages.py` | Per-page `.bin` extraction from dan.zip |
+| `fetch_computer_legacy.py` | Filtered downloader for computer-legacy.com (4-5★ + finalised) |
+| `extract_t42_pages.py` | T42 stream → 1000-byte pages via the `teletext` library (works on any zip-of-t42 directory) |
+| `teletext_decode.render_bytes` | Now handles alpha glyphs + graphics; canonical 480×500 output |
+
 ### Tokenisation
 
 Vocabulary is just the 256 byte values + a few specials (`<bos>`, `<eos>`,
@@ -686,3 +798,102 @@ If steps 2/3 turn out to be slow because they're CPU-bound and your code
 isn't multiprocess, parallelise across Modal containers with
 `.map()` — Modal will fan out to dozens of workers and the cost stays
 identical (you pay per CPU-second, not per machine).
+
+## 10. M1 results and M2 attempts (2026-05-14)
+
+### M1 outcome — success
+
+12M-param ViT-tiny + GPT2-small VisionEncoderDecoder, trained on 150k silver
+pairs (50k wikiart × 3 presets) for 3 epochs on a single A10G.
+
+- Wall: ~50 min training + ~8 min silver prep + ~5 min gold prep
+- Cost: ~$1.50 total
+- Final ckpt: `/data/ckpt-03.pt` on `teletext-m1` volume (avg loss 0.699)
+- Visual quality on gold horsenburger eval set: clearly conditions on input,
+  picks up colours and coarse shapes well, learned subtle HOLD-graphics
+  behaviour, surprisingly few control-code errors. Some weakness on fine
+  detail and on out-of-distribution pages (e.g. pure B&W).
+- Byte-match against gold: misleading metric. Loss halved 1.5 → 0.7 from
+  epoch 1 → 3 while byte-match *dropped* 424 → 373/1000. Trust visual /
+  re-rendered-pixel / stream-validity instead. See
+  `memory/project_eval_metrics.md`.
+
+### M2 attempts — both failed, bronze is poison
+
+We have ~112k real teletext pages on disk (`datasets/computer_legacy/pages/`
++ `datasets/teletextart/pages/`), each a 1000-byte stream. The plan was to
+render them back to PNGs and use `(render(bytes), bytes)` as bronze training
+pairs to fix M1's residual control-code errors.
+
+Tried two strategies, both regressed:
+
+- **M2 — 30/70 bronze/silver mix from scratch, 3 epochs**: outputs garbled,
+  two near-blank, only one image improved.
+- **M2b — bronze-only fine-tune from M1 ckpt-03, 1 epoch, lr 3e-5**:
+  catastrophic forgetting. All outputs garbage, no image adherence, even
+  the always-easy idx-7 test image dropped from 908 to 77 byte-match.
+
+**Root cause** (don't try bronze again without addressing this): in bronze,
+`image = render(bytes)` makes the task near-identity. It's much easier than
+photo→bytes, so the model preferentially learns it and abandons the hard
+task. Bronze isn't extra grammar examples — it's a different, easier task
+that crowds out the real one. Lesson saved in
+`memory/project_eval_metrics.md`.
+
+### Plan for next session
+
+M1 ckpt-03 stands as the project's best model. The remaining headroom is
+in things that don't change the underlying training task:
+
+#### Ranked options (cheapest-first)
+
+1. **Improve silver targets via a better DP solver** *(pure CPU, ~hours)*.
+   The HOLD-graphics errors we wanted bronze to fix are also present in
+   the silver targets (the DP solver in `image2teletext.py` doesn't always
+   pick the cleanest control-code placement). Fixing the solver lets us
+   regenerate silver and retrain at no extra GPU cost beyond one more
+   3-epoch run (~$1). Highest leverage per dollar.
+   - Concrete: read `image2teletext.py`, find the DP solver, audit how it
+     handles HOLD-GFX / SET-AT transitions, add a cell-cost term that
+     penalises gaps and background bleed.
+   - Validation: rerun on gold images, compare new vs old silver outputs
+     visually before retraining.
+
+2. **Add gold to training** *(near-zero new compute)*. Right now all 1909
+   horsenburger gold pages are held out for eval. Split 80/20: ~1500
+   training pairs of real photo→DP-solver-bytes that don't go through any
+   render-roundtrip. Mix into silver at ~5% (so they get oversampled
+   relative to silver size). Cheap to try — same architecture, same loop,
+   just an extra shard or two.
+   - Risk: only 1500 pairs, may not move the needle.
+
+3. **Scale silver to 200k images** *(~30 min CPU prep, $1 GPU)*. Same
+   wikiart streaming, longer run. Uses the existing
+   `prep_silver.py` skip-resume to extend the dataset incrementally. Gives
+   the model more photo diversity, especially the rare modes (B&W,
+   monochrome, high-contrast) that wikiart-50k undersamples.
+
+4. **Bigger model — ViT-small + GPT2-medium** *(~50M params, ~3 h GPU,
+   ~$3)*. Test if 12M is the bottleneck before throwing more data at it.
+   Worth doing only after (1) and (3) are established as not-enough.
+
+#### Off the table
+
+- **Bronze / `(render(bytes), bytes)` pairs in any form**, until we have
+  a way to make the encoder genuinely solve a different problem on bronze
+  vs silver (e.g. degrade bronze inputs with noise / down-sampling, OR
+  use bronze only for decoder-LM-style pretraining with image inputs
+  zeroed out). Don't repeat the naive approach.
+
+#### Resume-here checklist
+
+- M1 ckpt is at `/data/ckpt-03.pt` on the `teletext-m1` Modal volume.
+- Untouched gold dataset at `/data/gold.npz` (1909 pairs).
+- Silver shards at `/data/silver/silver-*.tar` (50 shards, 150k pairs).
+- Bronze shards exist at `/data/bronze/bronze-*.tar` but **don't use
+  them** unless first solving the identity-task issue above.
+- All M2 ckpts (`ckpt-m2-*.pt`, `ckpt-m2b-*.pt`) can be deleted to free
+  volume space.
+- `modal_jobs/train.py` already supports `--resume-ckpt`, `--bronze-frac`,
+  `--tag`, `--warmup-steps`, `--lr`. The `MSYS_NO_PATHCONV=1` env var is
+  required when passing `/data/...` paths from Git Bash.

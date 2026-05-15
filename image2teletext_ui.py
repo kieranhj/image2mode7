@@ -453,4 +453,4 @@ with gr.Blocks(title="image2teletext") as demo:
 
 
 if __name__ == "__main__":
-    demo.launch(css=_CSS)
+    demo.launch(css=_CSS, server_name="0.0.0.0", ssr_mode=False)

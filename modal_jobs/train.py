@@ -40,8 +40,9 @@ volume = modal.Volume.from_name("teletext-m1", create_if_missing=True)
 app    = modal.App("teletext-m1-train", image=image)
 DATA   = "/data"
 
-SHARDS_GLOB = f"{DATA}/silver/silver-*.tar"
-CKPT_FMT    = f"{DATA}/ckpt-{{:02d}}.pt"
+SILVER_GLOB = f"{DATA}/silver/silver-*.tar"
+BRONZE_GLOB = f"{DATA}/bronze/bronze-*.tar"
+CKPT_FMT    = f"{DATA}/ckpt-{{tag}}-{{epoch:02d}}.pt"
 LOG_EVERY   = 50
 
 
@@ -51,7 +52,10 @@ def train(epochs: int = 3,
           lr: float = 3e-4,
           weight_decay: float = 0.05,
           warmup_steps: int = 500,
-          num_workers: int = 4):
+          num_workers: int = 4,
+          bronze_frac: float = 0.0,
+          tag: str = "m1",
+          resume_ckpt: str = ""):
     import sys, glob, math, time, os, io
     sys.path.insert(0, "/repo")
     import torch, torch.nn.functional as F
@@ -61,16 +65,25 @@ def train(epochs: int = 3,
     from model import (build_model, PAGE_LEN, BOS_ID, EOS_ID, PAD_ID, IMAGE_HW)
 
     volume.reload()
-    shards = sorted(glob.glob(SHARDS_GLOB))
-    if not shards:
-        raise RuntimeError(f"no shards found at {SHARDS_GLOB}")
-    print(f"[train] {len(shards)} shards, batch={batch_size}, lr={lr}, "
-          f"epochs={epochs}", flush=True)
+    silver_shards = sorted(glob.glob(SILVER_GLOB)) if bronze_frac < 1.0 else []
+    bronze_shards = sorted(glob.glob(BRONZE_GLOB)) if bronze_frac > 0 else []
+    if bronze_frac < 1.0 and not silver_shards:
+        raise RuntimeError(f"no silver shards at {SILVER_GLOB}")
+    if bronze_frac > 0 and not bronze_shards:
+        raise RuntimeError(f"bronze_frac>0 but no bronze shards at {BRONZE_GLOB}")
+    print(f"[train] silver={len(silver_shards)} bronze={len(bronze_shards)} "
+          f"bronze_frac={bronze_frac} batch={batch_size} lr={lr} "
+          f"epochs={epochs} tag={tag}", flush=True)
 
     device = torch.device("cuda")
     model = build_model().to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"[train] model params: {n_params/1e6:.2f}M", flush=True)
+
+    if resume_ckpt:
+        print(f"[train] loading weights from {resume_ckpt}", flush=True)
+        ck = torch.load(resume_ckpt, map_location=device, weights_only=False)
+        model.load_state_dict(ck["model"])
 
     optim = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay,
                               betas=(0.9, 0.95))
@@ -92,18 +105,41 @@ def train(epochs: int = 3,
         labels            = torch.cat([page, torch.tensor([EOS_ID])])
         return px, decoder_input_ids, labels
 
+    def make_one(shards, seed):
+        return (wds.WebDataset(shards, shardshuffle=True,
+                               nodesplitter=wds.split_by_node,
+                               seed=seed, handler=wds.warn_and_continue)
+                .shuffle(1000)
+                .map(decode_sample, handler=wds.warn_and_continue))
+
     def make_loader(epoch_seed):
-        ds = (wds.WebDataset(shards, shardshuffle=True, nodesplitter=wds.split_by_node,
-                             seed=epoch_seed, handler=wds.warn_and_continue)
-              .shuffle(2000)
-              .map(decode_sample, handler=wds.warn_and_continue)
-              .batched(batch_size, partial=False))
+        if bronze_frac >= 1.0:
+            ds = make_one(bronze_shards, epoch_seed).batched(
+                batch_size, partial=False)
+        elif bronze_frac > 0:
+            silver_ds = make_one(silver_shards, epoch_seed)
+            bronze_ds = make_one(bronze_shards, epoch_seed + 1)
+            mix = wds.RandomMix([silver_ds, bronze_ds],
+                                probs=[1.0 - bronze_frac, bronze_frac])
+            ds = wds.DataPipeline(mix, wds.batched(batch_size, partial=False))
+        else:
+            ds = make_one(silver_shards, epoch_seed).batched(
+                batch_size, partial=False)
         return DataLoader(ds, batch_size=None, num_workers=num_workers,
                           pin_memory=True, persistent_workers=False)
 
-    # rough sample count for cosine schedule
-    samples_per_shard = 1000 * 3
-    total_samples = len(shards) * samples_per_shard
+    # Rough sample count for cosine schedule. Silver = 3 samples/source*image (3
+    # presets), bronze = 1. With RandomMix, an epoch is bounded by whichever
+    # stream we'd exhaust first at the chosen mix ratio.
+    silver_samples = len(silver_shards) * 1000 * 3
+    bronze_samples = len(bronze_shards) * 1000
+    if bronze_frac >= 1.0:
+        total_samples = bronze_samples
+    elif bronze_frac > 0:
+        total_samples = int(min(silver_samples / (1.0 - bronze_frac),
+                                bronze_samples / bronze_frac))
+    else:
+        total_samples = silver_samples
     steps_per_epoch = total_samples // batch_size
     total_steps     = steps_per_epoch * epochs
     print(f"[train] est total steps: {total_steps} "
@@ -154,7 +190,7 @@ def train(epochs: int = 3,
                       f"lr={lr_at(step):.2e} loss={loss.item():.3f} "
                       f"{spd:.1f} step/s", flush=True)
 
-        ckpt_path = CKPT_FMT.format(epoch + 1)
+        ckpt_path = CKPT_FMT.format(tag=tag, epoch=epoch + 1)
         torch.save({
             "model": model.state_dict(),
             "config": model.config.to_diff_dict(),
@@ -169,16 +205,19 @@ def train(epochs: int = 3,
     return {
         "epochs": epochs,
         "steps": step,
-        "final_ckpt": CKPT_FMT.format(epochs),
+        "final_ckpt": CKPT_FMT.format(tag=tag, epoch=epochs),
         "wall_minutes": round((time.time() - t0) / 60, 1),
     }
 
 
 @app.local_entrypoint()
 def main(epochs: int = 3, batch_size: int = 32, lr: float = 3e-4,
-         spawn: bool = False):
+         warmup_steps: int = 500, bronze_frac: float = 0.0, tag: str = "m1",
+         resume_ckpt: str = "", spawn: bool = False):
+    args = (epochs, batch_size, lr, 0.05, warmup_steps, 4,
+            bronze_frac, tag, resume_ckpt)
     if spawn:
-        call = train.spawn(epochs, batch_size, lr)
+        call = train.spawn(*args)
         print(f"spawned: {call.object_id}")
     else:
-        print(train.remote(epochs, batch_size, lr))
+        print(train.remote(*args))

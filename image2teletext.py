@@ -1762,6 +1762,18 @@ PRESETS = {
         sharpen_amount=120, sharpen_radius=1.0, sharpen_threshold=3,
         edge_weight=2.5, dither=False,
     ),
+    'level1': dict(
+        # Source is already a BBC Mode 7 Level 1 (8-colour, fully-saturated)
+        # teletext image — e.g. screenshots of actual broadcast pages or
+        # platforms that constrain themselves to Level 1. Preserve it.
+        # snap_palette quantises each pixel to the nearest of the 8 Level 1
+        # palette colours; the correct PAR (1.2) compensates for the
+        # display-side stretch so 2x3 sub-pixel blocks land on grid.
+        # Nothing else: no dither, no quantise, no flatten, no boost —
+        # the source already is what we want to encode.
+        par=1.2,
+        snap_palette=True,
+    ),
     'dark': dict(
         # Dark or underexposed source images.
         # Gamma lift brightens shadows; modest contrast and saturation boost.

@@ -290,8 +290,23 @@ ALPHA_CELL_H = 20
 RENDER_W = N_COLS * ALPHA_CELL_W   # 480
 RENDER_H = N_ROWS * ALPHA_CELL_H   # 500
 
-_FONT_PATH = pathlib.Path(__file__).parent / "datasets" / "teletext_assets" / "teletext2.ttf"
 _ALPHA_GLYPHS: dict[int, np.ndarray] | None = None
+
+
+def _find_font() -> pathlib.Path | None:
+    # Source-tree layout (this repo, or editable install).
+    p = pathlib.Path(__file__).parent / "datasets" / "teletext_assets" / "teletext2.ttf"
+    if p.exists():
+        return p
+    # Installed via pip — font ships in the image2teletext_assets package.
+    try:
+        from importlib.resources import files
+        p = files("image2teletext_assets").joinpath("teletext2.ttf")
+        if p.is_file():
+            return pathlib.Path(str(p))
+    except (ImportError, ModuleNotFoundError, FileNotFoundError):
+        pass
+    return None
 
 
 def _load_alpha_glyphs() -> dict[int, np.ndarray]:
@@ -300,7 +315,8 @@ def _load_alpha_glyphs() -> dict[int, np.ndarray]:
     global _ALPHA_GLYPHS
     if _ALPHA_GLYPHS is not None:
         return _ALPHA_GLYPHS
-    if not _FONT_PATH.exists():
+    font_path = _find_font()
+    if font_path is None:
         _ALPHA_GLYPHS = {}
         return _ALPHA_GLYPHS
 
@@ -311,7 +327,7 @@ def _load_alpha_glyphs() -> dict[int, np.ndarray]:
     chosen_size = target_h
     for size in range(target_h, target_h + 12):
         try:
-            font = ImageFont.truetype(str(_FONT_PATH), size=size)
+            font = ImageFont.truetype(str(font_path), size=size)
             bbox = font.getbbox("M")
             w = bbox[2] - bbox[0]
             if w >= target_w:
@@ -319,7 +335,7 @@ def _load_alpha_glyphs() -> dict[int, np.ndarray]:
                 break
         except Exception:
             continue
-    font = ImageFont.truetype(str(_FONT_PATH), size=chosen_size)
+    font = ImageFont.truetype(str(font_path), size=chosen_size)
 
     glyphs: dict[int, np.ndarray] = {}
     canvas_w, canvas_h = target_w * 2, target_h * 2

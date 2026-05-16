@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image2teletext"
+version = "0.1.0"
+description = "BBC Micro Mode 7 / Teletext image converter — DP solver + decoder + renderer"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Kieran Connell" }]
+dependencies = [
+    "numpy>=2.0",
+    "pillow>=10.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/kieranhj/image2mode7"
+
+[project.scripts]
+image2teletext = "image2teletext:main"
+
+[tool.setuptools]
+py-modules = ["image2teletext", "teletext_decode"]
+packages = ["image2teletext_assets"]
+
+[tool.setuptools.package-data]
+image2teletext_assets = ["teletext2.ttf"]

@@ -1,4 +1,6 @@
+# C++ build artifacts (legacy 2019 build, never committed)
 *.obj
+*.o
 *.log
 *.tlog
 *.idb
@@ -6,15 +8,41 @@
 *.opendb
 *.iobj
 *.ipdb
-m7col
-*.suo
-test
 *.pdb
 *.ilk
 *.ipch
-*.pdb
-*.o
+*.suo
+*.exe
+build/
+m7col
+
+# Python
+__pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# IDE / tool caches
+.vs/
+.gradio/
+.ipynb_checkpoints/
+.vscode/
+.idea/
 .claude/settings.local.json
-/__pycache__
-/.gradio
+
+# Research / training data + local experiments (large, derived; never tracked
+# here. Lives on Modal volume + the telecat repo + scrape scripts in this repo).
+/datasets/
+/samples/
+/test/
+
+# Generated gallery artifacts
+/gallery/gallery.html
+/gallery/gallery_results_full.json
+/gallery/__pycache__/
+
+# OS
+.DS_Store
+Thumbs.db

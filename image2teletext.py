@@ -1183,7 +1183,10 @@ def preprocess_image(img_path, filter='bilinear', par=1.2,
         into grey.  Ideal for images that are already Teletext renders.
     """
     from PIL import ImageEnhance
-    img = Image.open(img_path).convert('RGB')
+    if isinstance(img_path, Image.Image):
+        img = img_path.convert('RGB')
+    else:
+        img = Image.open(img_path).convert('RGB')
     iw, ih = img.size
 
     if direct_sample:
@@ -1781,6 +1784,23 @@ PRESETS = {
         sharpen_amount=150, sharpen_radius=1.0, sharpen_threshold=3,
     ),
 }
+
+
+def convert(img, preset=None, **overrides):
+    """Programmatic entry point: convert a PIL Image (or path) to 1000 Mode 7 bytes.
+
+    Resolves a named preset from PRESETS to flat kwargs, then dispatches to
+    convert_image. Explicit kwargs override preset values.
+    """
+    if preset is not None:
+        if preset not in PRESETS:
+            raise ValueError(
+                f"unknown preset {preset!r}; available: {sorted(PRESETS)}"
+            )
+        kwargs = {**PRESETS[preset], **overrides}
+    else:
+        kwargs = overrides
+    return convert_image(img, **kwargs)
 
 
 def main():

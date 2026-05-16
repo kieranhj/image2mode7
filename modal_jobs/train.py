@@ -42,6 +42,7 @@ DATA   = "/data"
 
 SILVER_GLOB = f"{DATA}/silver/silver-*.tar"
 BRONZE_GLOB = f"{DATA}/bronze/bronze-*.tar"
+GOLD_GLOB   = f"{DATA}/gold/gold-*.tar"
 CKPT_FMT    = f"{DATA}/ckpt-{{tag}}-{{epoch:02d}}.pt"
 LOG_EVERY   = 50
 
@@ -54,6 +55,7 @@ def train(epochs: int = 3,
           warmup_steps: int = 500,
           num_workers: int = 4,
           bronze_frac: float = 0.0,
+          gold_frac: float = 0.0,
           tag: str = "m1",
           resume_ckpt: str = ""):
     import sys, glob, math, time, os, io
@@ -65,14 +67,20 @@ def train(epochs: int = 3,
     from model import (build_model, PAGE_LEN, BOS_ID, EOS_ID, PAD_ID, IMAGE_HW)
 
     volume.reload()
+    if bronze_frac > 0 and gold_frac > 0:
+        raise RuntimeError("set bronze_frac OR gold_frac, not both")
     silver_shards = sorted(glob.glob(SILVER_GLOB)) if bronze_frac < 1.0 else []
     bronze_shards = sorted(glob.glob(BRONZE_GLOB)) if bronze_frac > 0 else []
+    gold_shards   = sorted(glob.glob(GOLD_GLOB))   if gold_frac   > 0 else []
     if bronze_frac < 1.0 and not silver_shards:
         raise RuntimeError(f"no silver shards at {SILVER_GLOB}")
     if bronze_frac > 0 and not bronze_shards:
         raise RuntimeError(f"bronze_frac>0 but no bronze shards at {BRONZE_GLOB}")
+    if gold_frac > 0 and not gold_shards:
+        raise RuntimeError(f"gold_frac>0 but no gold shards at {GOLD_GLOB}")
     print(f"[train] silver={len(silver_shards)} bronze={len(bronze_shards)} "
-          f"bronze_frac={bronze_frac} batch={batch_size} lr={lr} "
+          f"gold={len(gold_shards)} bronze_frac={bronze_frac} "
+          f"gold_frac={gold_frac} batch={batch_size} lr={lr} "
           f"epochs={epochs} tag={tag}", flush=True)
 
     device = torch.device("cuda")
@@ -105,10 +113,11 @@ def train(epochs: int = 3,
         labels            = torch.cat([page, torch.tensor([EOS_ID])])
         return px, decoder_input_ids, labels
 
-    def make_one(shards, seed):
+    def make_one(shards, seed, resampled=False):
         return (wds.WebDataset(shards, shardshuffle=True,
                                nodesplitter=wds.split_by_node,
-                               seed=seed, handler=wds.warn_and_continue)
+                               seed=seed, handler=wds.warn_and_continue,
+                               empty_check=False, resampled=resampled)
                 .shuffle(1000)
                 .map(decode_sample, handler=wds.warn_and_continue))
 
@@ -122,6 +131,12 @@ def train(epochs: int = 3,
             mix = wds.RandomMix([silver_ds, bronze_ds],
                                 probs=[1.0 - bronze_frac, bronze_frac])
             ds = wds.DataPipeline(mix, wds.batched(batch_size, partial=False))
+        elif gold_frac > 0:
+            silver_ds = make_one(silver_shards, epoch_seed)
+            gold_ds   = make_one(gold_shards, epoch_seed + 1, resampled=True)
+            mix = wds.RandomMix([silver_ds, gold_ds],
+                                probs=[1.0 - gold_frac, gold_frac])
+            ds = wds.DataPipeline(mix, wds.batched(batch_size, partial=False))
         else:
             ds = make_one(silver_shards, epoch_seed).batched(
                 batch_size, partial=False)
@@ -133,11 +148,16 @@ def train(epochs: int = 3,
     # stream we'd exhaust first at the chosen mix ratio.
     silver_samples = len(silver_shards) * 1000 * 3
     bronze_samples = len(bronze_shards) * 1000
+    gold_samples   = len(gold_shards)   * 1000
     if bronze_frac >= 1.0:
         total_samples = bronze_samples
     elif bronze_frac > 0:
         total_samples = int(min(silver_samples / (1.0 - bronze_frac),
                                 bronze_samples / bronze_frac))
+    elif gold_frac > 0:
+        # Gold is small (~1.9k); we'll cycle through it many times per epoch.
+        # Bound the epoch by silver consumption at the chosen mix ratio.
+        total_samples = int(silver_samples / (1.0 - gold_frac))
     else:
         total_samples = silver_samples
     steps_per_epoch = total_samples // batch_size
@@ -212,10 +232,11 @@ def train(epochs: int = 3,
 
 @app.local_entrypoint()
 def main(epochs: int = 3, batch_size: int = 32, lr: float = 3e-4,
-         warmup_steps: int = 500, bronze_frac: float = 0.0, tag: str = "m1",
+         warmup_steps: int = 500, bronze_frac: float = 0.0,
+         gold_frac: float = 0.0, tag: str = "m1",
          resume_ckpt: str = "", spawn: bool = False):
     args = (epochs, batch_size, lr, 0.05, warmup_steps, 4,
-            bronze_frac, tag, resume_ckpt)
+            bronze_frac, gold_frac, tag, resume_ckpt)
     if spawn:
         call = train.spawn(*args)
         print(f"spawned: {call.object_id}")

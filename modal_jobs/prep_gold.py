@@ -1,11 +1,12 @@
 """Step 2 — prep_gold.
 
-Download the ~1900 horsenburger gallery PNGs to the persistent volume, decode
-each one to its 1000-byte Mode 7 stream, and write `/data/gold.npz` containing:
+Download the ~1900 horsenburger gallery PNGs to the persistent volume, encode
+each one to its 1000-byte Mode 7 stream via image2teletext.convert (DP solver),
+and write `/data/gold.npz` containing:
   bytes : (N, 1000) uint8
   names : (N,) <U... filenames
 
-Re-runnable: the downloader skips existing files, and decode is idempotent.
+Re-runnable: the downloader skips existing files, and convert is deterministic.
 """
 import modal
 from pathlib import Path
@@ -33,11 +34,31 @@ DATA   = "/data"
 
 GALLERY_DIR = f"{DATA}/horsenburger"
 OUT_NPZ     = f"{DATA}/gold.npz"
+N_WORKERS   = 16
 
 
-@app.function(volumes={DATA: volume}, timeout=60 * 60)
+def _worker_init():
+    import os, sys
+    os.cpu_count = lambda: 1
+    sys.stderr = open(os.devnull, "w")
+    sys.stdout = open(os.devnull, "w")
+
+
+def _process_one(path_str):
+    import sys
+    sys.path.insert(0, "/repo")
+    from PIL import Image
+    from image2teletext import convert
+    img = Image.open(path_str).convert("RGB").resize((256, 192), Image.LANCZOS)
+    page = convert(img)
+    assert len(page) == 1000
+    return path_str, bytes(page)
+
+
+@app.function(volumes={DATA: volume}, cpu=N_WORKERS, timeout=2 * 60 * 60)
 def prep_gold():
-    import os, sys, runpy, pathlib, numpy as np
+    import os, sys, runpy, pathlib, numpy as np, time
+    from concurrent.futures import ProcessPoolExecutor
     from tqdm import tqdm
 
     sys.path.insert(0, "/repo")
@@ -48,23 +69,28 @@ def prep_gold():
     runpy.run_path("/repo/gallery/download_gallery.py", run_name="__main__")
     volume.commit()
 
-    import teletext_decode
-
     pngs = sorted(pathlib.Path(GALLERY_DIR).glob("*.png")) \
          + sorted(pathlib.Path(GALLERY_DIR).glob("*.PNG"))
-    print(f"[prep_gold] decoding {len(pngs)} PNGs -> {OUT_NPZ}", flush=True)
+    paths = [str(p) for p in pngs]
+    print(f"[prep_gold] encoding {len(paths)} PNGs via DP solver "
+          f"({N_WORKERS} workers) -> {OUT_NPZ}", flush=True)
 
-    names, rows, failed = [], [], 0
-    for p in tqdm(pngs):
-        try:
-            page = teletext_decode.decode_image(str(p))
-            assert len(page) == 1000
-            rows.append(np.frombuffer(bytes(page), dtype=np.uint8))
-            names.append(p.name)
-        except Exception as e:
-            failed += 1
-            print(f"  FAIL {p.name}: {e}", flush=True)
+    t0 = time.time()
+    name_to_bytes: dict[str, bytes] = {}
+    failed = 0
+    with ProcessPoolExecutor(max_workers=N_WORKERS,
+                             initializer=_worker_init) as pool:
+        for result in tqdm(pool.map(_process_one, paths, chunksize=4),
+                           total=len(paths)):
+            try:
+                path_str, page = result
+                name_to_bytes[pathlib.Path(path_str).name] = page
+            except Exception as e:
+                failed += 1
+                print(f"  FAIL: {e}", flush=True)
 
+    names = [p.name for p in pngs if p.name in name_to_bytes]
+    rows = [np.frombuffer(name_to_bytes[n], dtype=np.uint8) for n in names]
     arr_bytes = np.stack(rows, axis=0) if rows else np.zeros((0, 1000), np.uint8)
     arr_names = np.array(names)
     np.savez(OUT_NPZ, bytes=arr_bytes, names=arr_names)
@@ -74,6 +100,7 @@ def prep_gold():
         "gallery_pngs": len(pngs),
         "decoded": int(arr_bytes.shape[0]),
         "failed": failed,
+        "wall_minutes": round((time.time() - t0) / 60, 1),
         "npz_path": OUT_NPZ,
         "npz_shape": list(arr_bytes.shape),
     }

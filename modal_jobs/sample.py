@@ -36,8 +36,8 @@ DATA   = "/data"
 
 GALLERY_DIR = f"{DATA}/horsenburger"
 GOLD_NPZ    = f"{DATA}/gold.npz"
-CKPT_PATH   = f"{DATA}/ckpt-m2b-01.pt"
-OUT_DIR     = f"{DATA}/samples_m2b"
+CKPT_PATH   = f"{DATA}/ckpt-m3-03.pt"
+OUT_DIR     = f"{DATA}/samples_m3"
 
 
 @app.function(volumes={DATA: volume}, gpu="A10G", timeout=20 * 60)
